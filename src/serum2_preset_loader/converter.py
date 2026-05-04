@@ -42,12 +42,24 @@ _PROCESSOR_EXTRA_TOPLEVEL: dict[str, Any] = {
 }
 
 # Current Serum 2 processor-state version markers (observed in 2.1.4).
-# `version` is intentionally a Python float — Serum's getState writes a
-# CBOR major-7 (float) value here, not an integer. cbor2 preserves the
-# distinction on encode, so emitting an int would produce a CBOR document
-# that doesn't byte-match what Serum produces.
-_PROCESSOR_PRODUCT_VERSION = "2.1.4"
-_PROCESSOR_FORMAT_VERSION = 10.0
+# `PROCESSOR_FORMAT_VERSION` is intentionally a Python float — Serum's getState
+# writes a CBOR major-7 (float) value here, not an integer. cbor2 preserves the
+# int/float distinction on encode, so emitting an int would produce a CBOR
+# document that doesn't byte-match what Serum produces.
+#
+# These are public so callers targeting a different Serum build can override
+# them without monkey-patching:
+#
+#     from serum2_preset_loader import converter
+#     converter.PROCESSOR_PRODUCT_VERSION = "2.2.0"
+#     converter.PROCESSOR_FORMAT_VERSION = 11.0
+PROCESSOR_PRODUCT_VERSION = "2.1.4"
+PROCESSOR_FORMAT_VERSION = 10.0
+
+# Highest `XferJson` envelope format version this converter knows how to
+# read/write. Serum 2.1.4 ships v2; if a future Serum bumps the wrapper to v3
+# we want to fail loudly instead of silently producing a malformed state.
+SUPPORTED_XFERJSON_VERSION = 2
 
 # Sub-keys that exist only in the preset shape, indexed by module-name prefix.
 # A "prefix" here means the module-name family followed by an integer suffix
@@ -110,8 +122,8 @@ def preset_cbor_to_processor_cbor(preset_cbor: dict) -> dict:
     arp = state.get("Arp0")
     if isinstance(arp, dict):
         arp.setdefault("activeClip", 0)
-    state["productVersion"] = _PROCESSOR_PRODUCT_VERSION
-    state["version"] = _PROCESSOR_FORMAT_VERSION
+    state["productVersion"] = PROCESSOR_PRODUCT_VERSION
+    state["version"] = PROCESSOR_FORMAT_VERSION
     return state
 
 
@@ -128,16 +140,39 @@ def _build_processor_metadata(compressed_cbor: bytes) -> dict:
         "component": "processor",
         "hash": hashlib.md5(compressed_cbor).hexdigest(),
         "product": "Serum2",
-        "productVersion": _PROCESSOR_PRODUCT_VERSION,
+        "productVersion": PROCESSOR_PRODUCT_VERSION,
         "url": "https://xferrecords.com/",
         "vendor": "Xfer Records",
-        "version": _PROCESSOR_FORMAT_VERSION,
+        "version": PROCESSOR_FORMAT_VERSION,
     }
+
+
+def _validate_preset_envelope(meta: dict, format_version: int) -> None:
+    """Reject blobs that aren't .SerumPreset files in a known format version."""
+    if format_version != SUPPORTED_XFERJSON_VERSION:
+        raise ValueError(
+            f"unsupported XferJson format version {format_version}; "
+            f"this converter targets v{SUPPORTED_XFERJSON_VERSION}"
+        )
+    file_type = meta.get("fileType")
+    if file_type != "SerumPreset":
+        # Most common mistake: feeding in a captured IComponent processor state,
+        # which uses the same XferJson envelope but has component='processor'.
+        component = meta.get("component")
+        hint = (
+            " (looks like a processor-state blob; this converter takes "
+            ".SerumPreset files only)"
+            if component == "processor" else ""
+        )
+        raise ValueError(
+            f"input is not a .SerumPreset (fileType={file_type!r}){hint}"
+        )
 
 
 def convert_preset_bytes(preset_bytes: bytes) -> bytes:
     """Convert raw .SerumPreset bytes to a DawDreamer-loadable VST3 state blob."""
-    _preset_meta, _format_ver, preset_cbor_bytes = unwrap_xferjson(preset_bytes)
+    preset_meta, format_version, preset_cbor_bytes = unwrap_xferjson(preset_bytes)
+    _validate_preset_envelope(preset_meta, format_version)
     preset_dict = cbor2.loads(preset_cbor_bytes)
     proc_dict = preset_cbor_to_processor_cbor(preset_dict)
     proc_cbor = cbor2.dumps(proc_dict)
@@ -158,3 +193,19 @@ def convert_preset_file(preset_path: str) -> bytes:
     """Read a .SerumPreset from disk and return the VST3 state blob."""
     with open(preset_path, "rb") as f:
         return convert_preset_bytes(f.read())
+
+
+def read_preset_metadata(preset_path: str) -> dict:
+    """Return the JSON metadata header from a ``.SerumPreset`` file.
+
+    Useful for batch-renaming, filtering by tag, or seeding an output
+    filename with the preset's display name. Cheap — does not decompress
+    the CBOR payload.
+
+    Keys typically present: ``fileType``, ``presetName``, ``presetAuthor``,
+    ``presetDescription``, ``tags``, ``product``, ``productVersion``,
+    ``hash``, ``vendor``, ``url``, ``version``.
+    """
+    with open(preset_path, "rb") as f:
+        meta, _format_ver, _cbor = unwrap_xferjson(f.read())
+    return meta

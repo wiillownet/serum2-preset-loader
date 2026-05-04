@@ -120,7 +120,15 @@ def juce_memoryblock_b64decode(s: str) -> bytes:
     dot = s.find(".")
     if dot < 0:
         raise ValueError("JUCE base64: missing '.' length separator")
-    num_bytes = int(s[:dot])
+    length_str = s[:dot]
+    try:
+        num_bytes = int(length_str)
+    except ValueError as e:
+        raise ValueError(
+            f"JUCE base64: malformed length prefix {length_str!r}"
+        ) from e
+    if num_bytes < 0:
+        raise ValueError(f"JUCE base64: negative length prefix {num_bytes}")
     out = bytearray(num_bytes)
     bit_pos = 0
     for c in s[dot + 1:]:

@@ -1,9 +1,12 @@
 """Tests for the XferJson and JUCE-VST3 envelope codecs."""
 from __future__ import annotations
 
+import json
 import struct
+import xml.etree.ElementTree as ET
 
 import pytest
+import zstandard
 
 from serum2_preset_loader.wrappers import (
     JUCE_VST3_MAGIC,
@@ -59,6 +62,21 @@ def test_juce_b64_decode_empty_payload():
     assert juce_memoryblock_b64decode("0.") == b""
 
 
+def test_juce_b64_decode_rejects_non_numeric_length_prefix():
+    with pytest.raises(ValueError, match="malformed length prefix"):
+        juce_memoryblock_b64decode("abc.AAAA")
+
+
+def test_juce_b64_decode_rejects_empty_length_prefix():
+    with pytest.raises(ValueError, match="malformed length prefix"):
+        juce_memoryblock_b64decode(".AAAA")
+
+
+def test_juce_b64_decode_rejects_negative_length_prefix():
+    with pytest.raises(ValueError, match="negative length prefix"):
+        juce_memoryblock_b64decode("-1.A")
+
+
 # ─── XferJson wrapper ─────────────────────────────────────────────────────
 
 def test_xferjson_round_trip():
@@ -85,9 +103,6 @@ def test_xferjson_rejects_bad_magic():
 
 def test_xferjson_size_mismatch_caught():
     """If the uncompressed-size header lies, unwrap should reject the blob."""
-    # Build a blob by hand with a wrong uncompressed_size in the header.
-    import zstandard
-    import json
     payload = b"hello world payload"
     compressed = zstandard.ZstdCompressor().compress(payload)
     meta_json = json.dumps({}).encode("utf-8")
@@ -104,7 +119,6 @@ def test_xferjson_size_mismatch_caught():
 
 def test_xferjson_corrupt_zstd_caught_as_value_error():
     """A corrupt zstd payload should surface as ValueError, not ZstdError."""
-    import json
     meta_json = json.dumps({}).encode("utf-8")
     blob = (
         XFER_MAGIC
@@ -119,7 +133,6 @@ def test_xferjson_corrupt_zstd_caught_as_value_error():
 
 def test_xferjson_precompressed_round_trip():
     """wrap_xferjson_precompressed lets the caller reuse the compressed bytes."""
-    import zstandard
     payload = b"\xa1\x64test\x05" * 20  # repeating tiny CBOR
     compressed = zstandard.ZstdCompressor().compress(payload)
     blob = wrap_xferjson_precompressed(
@@ -144,8 +157,6 @@ def test_build_juce_vst3_state_starts_with_magic():
 
 def test_build_juce_vst3_state_round_trip_via_xml():
     """The IComponent payload survives a round-trip through the XML envelope."""
-    import xml.etree.ElementTree as ET
-
     payload = bytes(range(64)) + b"\xff" * 32
     blob = build_juce_vst3_state(payload)
 
@@ -159,8 +170,6 @@ def test_build_juce_vst3_state_round_trip_via_xml():
 
 def test_build_juce_vst3_state_includes_ieditcontroller():
     """When ieditcontroller is non-empty it appears as its own XML element."""
-    import xml.etree.ElementTree as ET
-
     icomponent = b"icomp data"
     iedit = b"editcontroller data \x00\x01\x02"
     blob = build_juce_vst3_state(icomponent, iedit)

@@ -3,7 +3,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import struct
+import tempfile
+import xml.etree.ElementTree as ET
 
 import cbor2
 import pytest
@@ -12,8 +15,13 @@ import zstandard
 from serum2_preset_loader import (
     convert_preset_bytes,
     preset_cbor_to_processor_cbor,
+    read_preset_metadata,
 )
-from serum2_preset_loader.wrappers import XFER_MAGIC, unwrap_xferjson
+from serum2_preset_loader.wrappers import (
+    XFER_MAGIC,
+    juce_memoryblock_b64decode,
+    unwrap_xferjson,
+)
 
 
 # ─── preset_cbor_to_processor_cbor ────────────────────────────────────────
@@ -194,10 +202,6 @@ def test_convert_preset_bytes_produces_juce_envelope():
 
 def test_convert_preset_bytes_hash_is_md5_of_compressed_cbor():
     """Verified against a captured Serum 2.1.4 state: hash = md5(compressed_cbor)."""
-    import xml.etree.ElementTree as ET
-
-    from serum2_preset_loader.wrappers import juce_memoryblock_b64decode
-
     out = convert_preset_bytes(_make_minimal_preset_file())
     _magic, xml_len = struct.unpack("<II", out[:8])
     xml = out[8:8 + xml_len].decode("utf-8")
@@ -214,3 +218,52 @@ def test_convert_preset_bytes_hash_is_md5_of_compressed_cbor():
     assert meta["hash"] == hashlib.md5(compressed_cbor).hexdigest()
     assert meta["component"] == "processor"
     assert meta["productVersion"] == "2.1.4"
+
+
+# ─── Input shape validation ───────────────────────────────────────────────
+
+def _make_envelope(meta: dict, version: int = 2) -> bytes:
+    cbor_bytes = cbor2.dumps({"some": "cbor"})
+    compressed = zstandard.ZstdCompressor().compress(cbor_bytes)
+    meta_json = json.dumps(meta, separators=(",", ":")).encode("utf-8")
+    return (
+        XFER_MAGIC
+        + struct.pack("<Q", len(meta_json))
+        + meta_json
+        + struct.pack("<II", len(cbor_bytes), version)
+        + compressed
+    )
+
+
+def test_convert_rejects_processor_state_blob():
+    """Feeding in a captured IComponent processor state is the most likely
+    user mistake; we want a precise error, not garbage out."""
+    blob = _make_envelope({"component": "processor", "product": "Serum2"})
+    with pytest.raises(ValueError, match="processor-state blob"):
+        convert_preset_bytes(blob)
+
+
+def test_convert_rejects_unknown_filetype():
+    blob = _make_envelope({"fileType": "WhateverElse"})
+    with pytest.raises(ValueError, match="not a .SerumPreset"):
+        convert_preset_bytes(blob)
+
+
+def test_convert_rejects_unsupported_xferjson_version():
+    blob = _make_envelope({"fileType": "SerumPreset"}, version=99)
+    with pytest.raises(ValueError, match="unsupported XferJson format version 99"):
+        convert_preset_bytes(blob)
+
+
+# ─── read_preset_metadata ─────────────────────────────────────────────────
+
+def test_read_preset_metadata_returns_header_dict():
+    blob = _make_minimal_preset_file()
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        path = os.path.join(tmp_dir, "preset.SerumPreset")
+        with open(path, "wb") as f:
+            f.write(blob)
+        meta = read_preset_metadata(path)
+    assert meta["fileType"] == "SerumPreset"
+    assert meta["presetName"] == "Tiny Test"
+    assert "hash" in meta

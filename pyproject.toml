@@ -13,8 +13,14 @@ authors = [{ name = "wiillownet" }]
 keywords = ["serum", "serum2", "vst3", "preset", "dawdreamer", "audio"]
 classifiers = [
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "License :: OSI Approved :: MIT License",
     "Topic :: Multimedia :: Sound/Audio",
+    "Typing :: Typed",
 ]
 dependencies = [
     "cbor2>=5.4",
@@ -30,8 +36,14 @@ Issues = "https://github.com/wiillownet/serum-2-preset-loader/issues"
 render = ["dawdreamer", "scipy", "numpy"]
 test = ["pytest>=7"]
 
+[project.scripts]
+serum2-render = "serum2_preset_loader._cli:main"
+
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+serum2_preset_loader = ["py.typed"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

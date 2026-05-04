@@ -2,9 +2,13 @@
 from importlib.metadata import PackageNotFoundError, version as _pkg_version
 
 from .converter import (
+    PROCESSOR_FORMAT_VERSION,
+    PROCESSOR_PRODUCT_VERSION,
+    SUPPORTED_XFERJSON_VERSION,
     convert_preset_bytes,
     convert_preset_file,
     preset_cbor_to_processor_cbor,
+    read_preset_metadata,
 )
 from .wrappers import (
     build_juce_vst3_state,
@@ -22,8 +26,12 @@ __all__ = [
     "convert_preset_bytes",
     "convert_preset_file",
     "preset_cbor_to_processor_cbor",
+    "read_preset_metadata",
     "build_juce_vst3_state",
     "unwrap_xferjson",
     "wrap_xferjson",
     "wrap_xferjson_precompressed",
+    "PROCESSOR_FORMAT_VERSION",
+    "PROCESSOR_PRODUCT_VERSION",
+    "SUPPORTED_XFERJSON_VERSION",
 ]

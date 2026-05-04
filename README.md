@@ -39,12 +39,38 @@ synth.load_state("/tmp/state.bin")
 If you'd rather skip the temp file, you can stream the bytes via your own
 NamedTemporaryFile — DawDreamer's `load_state` takes a file path.
 
+## Reading preset metadata (no decode required)
+
+```python
+from serum2_preset_loader import read_preset_metadata
+meta = read_preset_metadata("My Preset.SerumPreset")
+print(meta["presetName"], meta["presetAuthor"], meta["tags"])
+```
+
 ## Usage as a CLI
 
-The included example renders one preset to a WAV file:
+Installing the `[render]` extra adds a `serum2-render` console script:
 
 ```sh
-python examples/render_preset.py /path/to/Serum2.vst3 "My Preset.SerumPreset" out.wav
+pip install 'serum2-preset-loader[render]'
+serum2-render /path/to/Serum2.vst3 "My Preset.SerumPreset" out.wav
+serum2-render --midi-note 48 --note-duration 4 --render-duration 6 \
+    /path/to/Serum2.vst3 "My Preset.SerumPreset" out.wav
+```
+
+`examples/render_preset.py` is a thin wrapper around the same entry point for
+folks running from a checkout.
+
+## Targeting a different Serum build
+
+The version markers Serum embeds in the processor-state CBOR are exposed as
+module attributes you can override before calling the converter:
+
+```python
+from serum2_preset_loader import converter
+converter.PROCESSOR_PRODUCT_VERSION = "2.2.0"
+converter.PROCESSOR_FORMAT_VERSION = 11.0
+# converter.SUPPORTED_XFERJSON_VERSION = 3   # if Serum bumps the wrapper
 ```
 
 ## How it works
