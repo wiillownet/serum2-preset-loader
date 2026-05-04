@@ -148,6 +148,27 @@ def test_unknown_processor_subkey_passes_through():
     assert out["MidiClip1"]["someFutureProcessorField"] == 42
 
 
+def test_prefix_match_requires_digit_suffix():
+    """Hypothetical 'MacroBank' top-level should NOT match the 'Macro' prefix
+    rule and lose its 'name' field."""
+    inp = _minimal_preset_cbor()
+    inp["MacroBank"] = {"plainParams": {}, "name": "should-not-be-stripped"}
+    out = preset_cbor_to_processor_cbor(inp)
+    assert out["MacroBank"]["name"] == "should-not-be-stripped"
+
+
+def test_pitchquantizer_prefix_handles_arbitrary_index():
+    """PitchQuantizer is on the prefix table; a hypothetical PitchQuantizer1
+    should be stripped the same way as PitchQuantizer0."""
+    inp = _minimal_preset_cbor()
+    inp["PitchQuantizer1"] = {
+        "plainParams": "default", "scale": [], "scaleName": "D minor",
+    }
+    out = preset_cbor_to_processor_cbor(inp)
+    assert "scaleName" not in out["PitchQuantizer1"]
+    assert "scale" in out["PitchQuantizer1"]
+
+
 # ─── convert_preset_bytes (full pipeline) ─────────────────────────────────
 
 def _make_minimal_preset_file() -> bytes:

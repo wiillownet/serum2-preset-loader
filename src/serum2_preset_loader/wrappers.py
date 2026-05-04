@@ -34,9 +34,12 @@ def unwrap_xferjson(blob: bytes) -> tuple[dict, int, bytes]:
     meta = json.loads(blob[17:17 + json_len])
     after = blob[17 + json_len:]
     uncompressed_size, version = struct.unpack("<II", after[:8])
-    cbor = zstandard.ZstdDecompressor().decompress(
-        after[8:], max_output_size=50_000_000
-    )
+    try:
+        cbor = zstandard.ZstdDecompressor().decompress(
+            after[8:], max_output_size=50_000_000
+        )
+    except zstandard.ZstdError as e:
+        raise ValueError(f"XferJson zstd payload corrupt: {e}") from e
     if len(cbor) != uncompressed_size:
         raise ValueError(
             f"XferJson CBOR size mismatch: header={uncompressed_size}, decompressed={len(cbor)}"
@@ -45,14 +48,44 @@ def unwrap_xferjson(blob: bytes) -> tuple[dict, int, bytes]:
 
 
 def wrap_xferjson(metadata: dict, cbor_bytes: bytes, *, version: int = 2) -> bytes:
+    """Compress ``cbor_bytes`` and emit the full XferJson envelope.
+
+    For pipelines that need the compressed bytes for *other* purposes too
+    (computing a hash, for instance), use :func:`wrap_xferjson_precompressed`
+    so the same compressed payload ends up both inside the envelope and in the
+    caller's hand — avoiding the ``compress() == compress()`` cross-call
+    invariant.
+    """
     meta_json = json.dumps(metadata, separators=(",", ":")).encode("utf-8")
     compressed = zstandard.ZstdCompressor().compress(cbor_bytes)
+    return wrap_xferjson_precompressed(
+        meta_json, compressed,
+        uncompressed_size=len(cbor_bytes),
+        version=version,
+    )
+
+
+def wrap_xferjson_precompressed(
+    metadata: dict | bytes,
+    compressed_cbor: bytes,
+    *,
+    uncompressed_size: int,
+    version: int = 2,
+) -> bytes:
+    """Emit the XferJson envelope from an already-Zstd-compressed CBOR payload.
+
+    ``metadata`` may be a dict (will be JSON-encoded) or pre-encoded JSON bytes.
+    """
+    if isinstance(metadata, dict):
+        meta_json = json.dumps(metadata, separators=(",", ":")).encode("utf-8")
+    else:
+        meta_json = metadata
     return (
         XFER_MAGIC
         + struct.pack("<Q", len(meta_json))
         + meta_json
-        + struct.pack("<II", len(cbor_bytes), version)
-        + compressed
+        + struct.pack("<II", uncompressed_size, version)
+        + compressed_cbor
     )
 
 

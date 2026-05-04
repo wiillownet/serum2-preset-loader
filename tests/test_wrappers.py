@@ -13,6 +13,7 @@ from serum2_preset_loader.wrappers import (
     juce_memoryblock_b64encode,
     unwrap_xferjson,
     wrap_xferjson,
+    wrap_xferjson_precompressed,
 )
 
 
@@ -51,6 +52,11 @@ def test_juce_b64_decode_rejects_missing_separator():
 def test_juce_b64_decode_rejects_bad_char():
     with pytest.raises(ValueError, match="bad character"):
         juce_memoryblock_b64decode("4.@@@@")
+
+
+def test_juce_b64_decode_empty_payload():
+    """`<len 0>.` with no body should decode to empty bytes."""
+    assert juce_memoryblock_b64decode("0.") == b""
 
 
 # ─── XferJson wrapper ─────────────────────────────────────────────────────
@@ -96,6 +102,37 @@ def test_xferjson_size_mismatch_caught():
         unwrap_xferjson(blob)
 
 
+def test_xferjson_corrupt_zstd_caught_as_value_error():
+    """A corrupt zstd payload should surface as ValueError, not ZstdError."""
+    import json
+    meta_json = json.dumps({}).encode("utf-8")
+    blob = (
+        XFER_MAGIC
+        + struct.pack("<Q", len(meta_json))
+        + meta_json
+        + struct.pack("<II", 100, 2)
+        + b"this is definitely not a zstd frame"
+    )
+    with pytest.raises(ValueError, match="zstd payload corrupt"):
+        unwrap_xferjson(blob)
+
+
+def test_xferjson_precompressed_round_trip():
+    """wrap_xferjson_precompressed lets the caller reuse the compressed bytes."""
+    import zstandard
+    payload = b"\xa1\x64test\x05" * 20  # repeating tiny CBOR
+    compressed = zstandard.ZstdCompressor().compress(payload)
+    blob = wrap_xferjson_precompressed(
+        {"k": "v"}, compressed, uncompressed_size=len(payload)
+    )
+    meta, version, cbor = unwrap_xferjson(blob)
+    assert meta == {"k": "v"}
+    assert version == 2
+    assert cbor == payload
+    # The wrapped envelope should contain the *exact* compressed bytes we passed in.
+    assert compressed in blob
+
+
 # ─── JUCE VST3 state envelope ─────────────────────────────────────────────
 
 def test_build_juce_vst3_state_starts_with_magic():
@@ -118,3 +155,20 @@ def test_build_juce_vst3_state_round_trip_via_xml():
     icomp = root.find("IComponent")
     assert icomp is not None and icomp.text is not None
     assert juce_memoryblock_b64decode(icomp.text) == payload
+
+
+def test_build_juce_vst3_state_includes_ieditcontroller():
+    """When ieditcontroller is non-empty it appears as its own XML element."""
+    import xml.etree.ElementTree as ET
+
+    icomponent = b"icomp data"
+    iedit = b"editcontroller data \x00\x01\x02"
+    blob = build_juce_vst3_state(icomponent, iedit)
+
+    _magic, xml_len = struct.unpack("<II", blob[:8])
+    xml = blob[8:8 + xml_len].decode("utf-8")
+    root = ET.fromstring(xml)
+    ic_el = root.find("IComponent")
+    ec_el = root.find("IEditController")
+    assert ic_el is not None and juce_memoryblock_b64decode(ic_el.text) == icomponent
+    assert ec_el is not None and juce_memoryblock_b64decode(ec_el.text) == iedit

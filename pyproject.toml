@@ -21,9 +21,17 @@ dependencies = [
     "zstandard>=0.20",
 ]
 
+[project.urls]
+Homepage = "https://github.com/wiillownet/serum-2-preset-loader"
+Repository = "https://github.com/wiillownet/serum-2-preset-loader"
+Issues = "https://github.com/wiillownet/serum-2-preset-loader/issues"
+
 [project.optional-dependencies]
 render = ["dawdreamer", "scipy", "numpy"]
 test = ["pytest>=7"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

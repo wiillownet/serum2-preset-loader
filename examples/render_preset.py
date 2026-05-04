@@ -43,9 +43,9 @@ def main() -> None:
         synth.add_midi_note(MIDI_NOTE, MIDI_VELOCITY, 0.0, NOTE_DURATION)
         engine.load_graph([(synth, [])])
         engine.render(RENDER_DURATION)
+        audio = engine.get_audio().T
+        audio_i16 = np.clip(audio * 32767.0, -32768.0, 32767.0).astype(np.int16)
 
-    audio = engine.get_audio().T
-    audio_i16 = np.clip(audio * 32767.0, -32768.0, 32767.0).astype(np.int16)
     wavfile.write(wav_path, SAMPLE_RATE, audio_i16)
     print(f"wrote {wav_path}")
 

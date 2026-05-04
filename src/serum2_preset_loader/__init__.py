@@ -10,6 +10,7 @@ from .wrappers import (
     build_juce_vst3_state,
     unwrap_xferjson,
     wrap_xferjson,
+    wrap_xferjson_precompressed,
 )
 
 try:
@@ -24,4 +25,5 @@ __all__ = [
     "build_juce_vst3_state",
     "unwrap_xferjson",
     "wrap_xferjson",
+    "wrap_xferjson_precompressed",
 ]

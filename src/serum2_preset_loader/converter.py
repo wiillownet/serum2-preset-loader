@@ -17,7 +17,11 @@ from typing import Any
 import cbor2
 import zstandard
 
-from .wrappers import build_juce_vst3_state, unwrap_xferjson, wrap_xferjson
+from .wrappers import (
+    build_juce_vst3_state,
+    unwrap_xferjson,
+    wrap_xferjson_precompressed,
+)
 
 
 # Top-level keys that exist only in the preset shape.
@@ -46,21 +50,25 @@ _PROCESSOR_PRODUCT_VERSION = "2.1.4"
 _PROCESSOR_FORMAT_VERSION = 10.0
 
 # Sub-keys that exist only in the preset shape, indexed by module-name prefix.
-# Using a blacklist (rather than whitelisting "clip"/"plainParams") so that any
-# new processor-side fields a future Serum version adds will pass through
-# instead of being silently dropped.
+# A "prefix" here means the module-name family followed by an integer suffix
+# (e.g. "Macro0", "PitchQuantizer3"). Using a blacklist (rather than
+# whitelisting "clip"/"plainParams") so that any new processor-side fields a
+# future Serum version adds will pass through instead of being silently
+# dropped.
 _PRESET_ONLY_SUBKEYS_BY_PREFIX: dict[str, tuple[str, ...]] = {
-    "Macro":   ("name",),
-    "FXRack":  ("displayName",),
+    "Macro":           ("name",),
+    "FXRack":          ("displayName",),
     "MidiClip": (
         "displayLength_Beats", "gridWidth_Beats", "gridYOffset_Rows",
         "laneTabs", "name",
     ),
+    "PitchQuantizer":  ("scaleName",),
 }
 
-_PRESET_ONLY_SUBKEYS_BY_MODULE: dict[str, tuple[str, ...]] = {
-    "PitchQuantizer0": ("scaleName",),
-}
+
+def _matches_prefix_with_index(key: str, prefix: str) -> bool:
+    """Match `<prefix><digits>` exactly (e.g. 'Macro0', not 'MacroBank')."""
+    return key.startswith(prefix) and key[len(prefix):].isdigit()
 
 
 def _expand_default_plainparams_inplace(obj: Any) -> None:
@@ -86,11 +94,9 @@ def _strip_preset_only_subkeys(state: dict) -> None:
         if not isinstance(value, dict):
             continue
         for prefix, drop_keys in _PRESET_ONLY_SUBKEYS_BY_PREFIX.items():
-            if key.startswith(prefix):
+            if _matches_prefix_with_index(key, prefix):
                 for dk in drop_keys:
                     value.pop(dk, None)
-        for dk in _PRESET_ONLY_SUBKEYS_BY_MODULE.get(key, ()):
-            value.pop(dk, None)
 
 
 def preset_cbor_to_processor_cbor(preset_cbor: dict) -> dict:
@@ -136,12 +142,15 @@ def convert_preset_bytes(preset_bytes: bytes) -> bytes:
     proc_dict = preset_cbor_to_processor_cbor(preset_dict)
     proc_cbor = cbor2.dumps(proc_dict)
 
-    # `wrap_xferjson` re-compresses, so to compute the hash we have to compress
-    # once here too. Done with the same default Zstd settings used by
-    # `wrap_xferjson`, so the bytes match.
+    # Compress exactly once: the same compressed bytes are both md5'd for the
+    # `hash` metadata field and embedded in the XferJson envelope. This avoids
+    # the cross-call invariant that two independent ZstdCompressor invocations
+    # produce byte-identical output.
     compressed_cbor = zstandard.ZstdCompressor().compress(proc_cbor)
     proc_meta = _build_processor_metadata(compressed_cbor)
-    icomponent = wrap_xferjson(proc_meta, proc_cbor)
+    icomponent = wrap_xferjson_precompressed(
+        proc_meta, compressed_cbor, uncompressed_size=len(proc_cbor)
+    )
     return build_juce_vst3_state(icomponent)
 
 
