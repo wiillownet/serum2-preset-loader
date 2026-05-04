@@ -131,6 +131,18 @@ def test_xferjson_corrupt_zstd_caught_as_value_error():
         unwrap_xferjson(blob)
 
 
+def test_xferjson_expected_version_passes_when_matching():
+    blob = wrap_xferjson({"k": "v"}, b"\xa1\x64test\x05", version=2)
+    meta, version, _ = unwrap_xferjson(blob, expected_version=2)
+    assert meta == {"k": "v"} and version == 2
+
+
+def test_xferjson_expected_version_rejects_mismatch():
+    blob = wrap_xferjson({"k": "v"}, b"\xa1\x64test\x05", version=2)
+    with pytest.raises(ValueError, match="unsupported XferJson format version 2"):
+        unwrap_xferjson(blob, expected_version=3)
+
+
 def test_xferjson_precompressed_round_trip():
     """wrap_xferjson_precompressed lets the caller reuse the compressed bytes."""
     payload = b"\xa1\x64test\x05" * 20  # repeating tiny CBOR

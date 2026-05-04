@@ -22,8 +22,15 @@ import zstandard
 XFER_MAGIC = b"XferJson\x00"
 
 
-def unwrap_xferjson(blob: bytes) -> tuple[dict, int, bytes]:
-    """Return (metadata_dict, format_version, decompressed_cbor_bytes)."""
+def unwrap_xferjson(
+    blob: bytes, *, expected_version: int | None = None
+) -> tuple[dict, int, bytes]:
+    """Return (metadata_dict, format_version, decompressed_cbor_bytes).
+
+    If ``expected_version`` is set, raise ``ValueError`` when the wrapper's
+    embedded version differs — useful so any caller (not just the preset
+    converter) can opt into the same guard.
+    """
     if len(blob) < 17:
         raise ValueError(f"XferJson blob too short ({len(blob)} bytes)")
     if blob[:9] != XFER_MAGIC:
@@ -34,6 +41,10 @@ def unwrap_xferjson(blob: bytes) -> tuple[dict, int, bytes]:
     meta = json.loads(blob[17:17 + json_len])
     after = blob[17 + json_len:]
     uncompressed_size, version = struct.unpack("<II", after[:8])
+    if expected_version is not None and version != expected_version:
+        raise ValueError(
+            f"unsupported XferJson format version {version}; expected {expected_version}"
+        )
     try:
         cbor = zstandard.ZstdDecompressor().decompress(
             after[8:], max_output_size=50_000_000

@@ -147,13 +147,8 @@ def _build_processor_metadata(compressed_cbor: bytes) -> dict:
     }
 
 
-def _validate_preset_envelope(meta: dict, format_version: int) -> None:
-    """Reject blobs that aren't .SerumPreset files in a known format version."""
-    if format_version != SUPPORTED_XFERJSON_VERSION:
-        raise ValueError(
-            f"unsupported XferJson format version {format_version}; "
-            f"this converter targets v{SUPPORTED_XFERJSON_VERSION}"
-        )
+def _validate_preset_filetype(meta: dict) -> None:
+    """Reject blobs that aren't ``.SerumPreset`` files."""
     file_type = meta.get("fileType")
     if file_type != "SerumPreset":
         # Most common mistake: feeding in a captured IComponent processor state,
@@ -171,8 +166,10 @@ def _validate_preset_envelope(meta: dict, format_version: int) -> None:
 
 def convert_preset_bytes(preset_bytes: bytes) -> bytes:
     """Convert raw .SerumPreset bytes to a DawDreamer-loadable VST3 state blob."""
-    preset_meta, format_version, preset_cbor_bytes = unwrap_xferjson(preset_bytes)
-    _validate_preset_envelope(preset_meta, format_version)
+    preset_meta, _format_version, preset_cbor_bytes = unwrap_xferjson(
+        preset_bytes, expected_version=SUPPORTED_XFERJSON_VERSION
+    )
+    _validate_preset_filetype(preset_meta)
     preset_dict = cbor2.loads(preset_cbor_bytes)
     proc_dict = preset_cbor_to_processor_cbor(preset_dict)
     proc_cbor = cbor2.dumps(proc_dict)

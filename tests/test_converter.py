@@ -243,6 +243,29 @@ def test_convert_rejects_processor_state_blob():
         convert_preset_bytes(blob)
 
 
+def test_processor_state_hint_only_fires_when_component_is_processor():
+    """The 'looks like a processor-state blob' hint is user-facing copy and
+    should fire only on the specific shape that triggers it — not on every
+    unknown fileType.
+    """
+    # No `component` field → no hint
+    blob = _make_envelope({"fileType": "SomethingElse"})
+    with pytest.raises(ValueError) as exc:
+        convert_preset_bytes(blob)
+    assert "processor-state blob" not in str(exc.value)
+
+    # `component='processor'` (and no fileType) → hint fires
+    blob = _make_envelope({"component": "processor"})
+    with pytest.raises(ValueError, match="processor-state blob"):
+        convert_preset_bytes(blob)
+
+    # `component` set to something other than 'processor' → no hint
+    blob = _make_envelope({"component": "editor"})
+    with pytest.raises(ValueError) as exc:
+        convert_preset_bytes(blob)
+    assert "processor-state blob" not in str(exc.value)
+
+
 def test_convert_rejects_unknown_filetype():
     blob = _make_envelope({"fileType": "WhateverElse"})
     with pytest.raises(ValueError, match="not a .SerumPreset"):
