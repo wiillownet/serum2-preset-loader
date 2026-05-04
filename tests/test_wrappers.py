@@ -53,8 +53,9 @@ def test_juce_b64_decode_rejects_missing_separator():
 
 
 def test_juce_b64_decode_rejects_bad_char():
+    # 4 bytes = 32 bits → ceil(32/6) = 6 body chars; '@' is outside the alphabet.
     with pytest.raises(ValueError, match="bad character"):
-        juce_memoryblock_b64decode("4.@@@@")
+        juce_memoryblock_b64decode("4.@@@@@@")
 
 
 def test_juce_b64_decode_empty_payload():
@@ -75,6 +76,24 @@ def test_juce_b64_decode_rejects_empty_length_prefix():
 def test_juce_b64_decode_rejects_negative_length_prefix():
     with pytest.raises(ValueError, match="negative length prefix"):
         juce_memoryblock_b64decode("-1.A")
+
+
+def test_juce_b64_decode_rejects_short_body():
+    """`5.` claims 5 bytes but supplies zero body chars — should fail loudly,
+    not silently return five zero bytes."""
+    with pytest.raises(ValueError, match="body length"):
+        juce_memoryblock_b64decode("5.")
+    # `3.A` claims 3 bytes (4 chars expected) but only supplies 1.
+    with pytest.raises(ValueError, match="body length"):
+        juce_memoryblock_b64decode("3.A")
+
+
+def test_juce_b64_decode_rejects_long_body():
+    """Trailing chars past the length-implied count should fail rather than
+    being silently dropped."""
+    encoded = juce_memoryblock_b64encode(b"\x01")  # "1.A."
+    with pytest.raises(ValueError, match="body length"):
+        juce_memoryblock_b64decode(encoded + "..")
 
 
 # ─── XferJson wrapper ─────────────────────────────────────────────────────
@@ -99,6 +118,21 @@ def test_xferjson_rejects_short_blob():
 def test_xferjson_rejects_bad_magic():
     with pytest.raises(ValueError, match="not an XferJson blob"):
         unwrap_xferjson(b"NOPE\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00")
+
+
+def test_xferjson_rejects_non_object_metadata():
+    """A scalar/array in the metadata slot is malformed; downstream callers
+    expect a dict and would otherwise crash with AttributeError."""
+    meta_json = b"[1, 2, 3]"  # JSON array, not an object
+    blob = (
+        XFER_MAGIC
+        + struct.pack("<Q", len(meta_json))
+        + meta_json
+        + struct.pack("<II", 0, 2)
+        + zstandard.ZstdCompressor().compress(b"")
+    )
+    with pytest.raises(ValueError, match="must be a JSON object"):
+        unwrap_xferjson(blob)
 
 
 def test_xferjson_size_mismatch_caught():

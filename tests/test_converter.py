@@ -14,6 +14,7 @@ import zstandard
 
 from serum2_preset_loader import (
     convert_preset_bytes,
+    convert_preset_file,
     preset_cbor_to_processor_cbor,
     read_preset_metadata,
 )
@@ -48,6 +49,8 @@ def _minimal_preset_cbor() -> dict:
             "laneTabs": [1, 2, 3],
             "gridWidth_Beats": 4.0,
             "name": "Clip 1",
+            "displayLength_Beats": 8.0,
+            "gridYOffset_Rows": 2,
         },
         # PitchQuantizer with `scaleName` (rule: drop)
         "PitchQuantizer0": {"plainParams": "default", "scale": [], "scaleName": "C major"},
@@ -107,7 +110,8 @@ def test_preset_only_subkeys_dropped():
     out = preset_cbor_to_processor_cbor(_minimal_preset_cbor())
     assert "name" not in out["Macro0"]
     assert "displayName" not in out["FXRack0"]
-    for k in ("laneTabs", "gridWidth_Beats", "name"):
+    for k in ("laneTabs", "gridWidth_Beats", "name",
+              "displayLength_Beats", "gridYOffset_Rows"):
         assert k not in out["MidiClip1"]
     assert "scaleName" not in out["PitchQuantizer0"]
     # should keep the legitimate processor-side fields
@@ -120,6 +124,23 @@ def test_processor_only_keys_added():
     assert out["component"] == "processor"
     assert out["killEnvsGracefullyCompat"] is True
     assert out["Arp0"]["activeClip"] == 0
+
+
+def test_arp_active_clip_default_applies_to_all_arp_modules():
+    """A future Serum that exposes Arp1+ should still get the default
+    activeClip applied — the rule is the prefix, not the literal 'Arp0'."""
+    inp = _minimal_preset_cbor()
+    inp["Arp2"] = {"plainParams": "default"}
+    out = preset_cbor_to_processor_cbor(inp)
+    assert out["Arp0"]["activeClip"] == 0
+    assert out["Arp2"]["activeClip"] == 0
+
+
+def test_arp_active_clip_does_not_overwrite_existing_value():
+    inp = _minimal_preset_cbor()
+    inp["Arp0"] = {"plainParams": {}, "activeClip": 7}
+    out = preset_cbor_to_processor_cbor(inp)
+    assert out["Arp0"]["activeClip"] == 7
 
 
 def test_version_markers_overwritten():
@@ -290,3 +311,15 @@ def test_read_preset_metadata_returns_header_dict():
     assert meta["fileType"] == "SerumPreset"
     assert meta["presetName"] == "Tiny Test"
     assert "hash" in meta
+
+
+def test_convert_preset_file_matches_convert_preset_bytes():
+    """The disk-reading path should produce the same blob as the in-memory one."""
+    blob = _make_minimal_preset_file()
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        path = os.path.join(tmp_dir, "preset.SerumPreset")
+        with open(path, "wb") as f:
+            f.write(blob)
+        from_file = convert_preset_file(path)
+    from_bytes = convert_preset_bytes(blob)
+    assert from_file == from_bytes

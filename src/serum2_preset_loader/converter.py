@@ -119,9 +119,11 @@ def preset_cbor_to_processor_cbor(preset_cbor: dict) -> dict:
     _expand_default_plainparams_inplace(state)
     _strip_preset_only_subkeys(state)
     state.update(_PROCESSOR_EXTRA_TOPLEVEL)
-    arp = state.get("Arp0")
-    if isinstance(arp, dict):
-        arp.setdefault("activeClip", 0)
+    # Every Arp<n> module gets a default `activeClip: 0` if the preset doesn't
+    # carry one. Hardcoding `Arp0` would miss future Arp1+ modules.
+    for k, v in state.items():
+        if isinstance(v, dict) and _matches_prefix_with_index(k, "Arp"):
+            v.setdefault("activeClip", 0)
     state["productVersion"] = PROCESSOR_PRODUCT_VERSION
     state["version"] = PROCESSOR_FORMAT_VERSION
     return state
@@ -138,7 +140,9 @@ def _build_processor_metadata(compressed_cbor: bytes) -> dict:
     """
     return {
         "component": "processor",
-        "hash": hashlib.md5(compressed_cbor).hexdigest(),
+        # `usedforsecurity=False` so this works on FIPS-restricted Python builds.
+        # The hash is integrity, not security.
+        "hash": hashlib.md5(compressed_cbor, usedforsecurity=False).hexdigest(),
         "product": "Serum2",
         "productVersion": PROCESSOR_PRODUCT_VERSION,
         "url": "https://xferrecords.com/",

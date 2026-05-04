@@ -39,6 +39,10 @@ def unwrap_xferjson(
     if len(blob) < 17 + json_len + 8:
         raise ValueError("XferJson blob truncated before CBOR header")
     meta = json.loads(blob[17:17 + json_len])
+    if not isinstance(meta, dict):
+        raise ValueError(
+            f"XferJson metadata must be a JSON object, got {type(meta).__name__}"
+        )
     after = blob[17 + json_len:]
     uncompressed_size, version = struct.unpack("<II", after[:8])
     if expected_version is not None and version != expected_version:
@@ -140,9 +144,16 @@ def juce_memoryblock_b64decode(s: str) -> bytes:
         ) from e
     if num_bytes < 0:
         raise ValueError(f"JUCE base64: negative length prefix {num_bytes}")
+    body = s[dot + 1:]
+    expected_chars = ((num_bytes * 8) + 5) // 6
+    if len(body) != expected_chars:
+        raise ValueError(
+            f"JUCE base64: body length {len(body)} doesn't match length prefix "
+            f"(expected {expected_chars} chars for {num_bytes} bytes)"
+        )
     out = bytearray(num_bytes)
     bit_pos = 0
-    for c in s[dot + 1:]:
+    for c in body:
         idx = _JUCE_B64_INDEX.get(c)
         if idx is None:
             raise ValueError(f"JUCE base64: bad character {c!r}")
