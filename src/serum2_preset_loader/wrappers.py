@@ -24,15 +24,23 @@ XFER_MAGIC = b"XferJson\x00"
 
 def unwrap_xferjson(blob: bytes) -> tuple[dict, int, bytes]:
     """Return (metadata_dict, format_version, decompressed_cbor_bytes)."""
+    if len(blob) < 17:
+        raise ValueError(f"XferJson blob too short ({len(blob)} bytes)")
     if blob[:9] != XFER_MAGIC:
         raise ValueError(f"not an XferJson blob: magic={blob[:9]!r}")
     json_len = struct.unpack("<Q", blob[9:17])[0]
+    if len(blob) < 17 + json_len + 8:
+        raise ValueError("XferJson blob truncated before CBOR header")
     meta = json.loads(blob[17:17 + json_len])
     after = blob[17 + json_len:]
-    _uncompressed_size, version = struct.unpack("<II", after[:8])
+    uncompressed_size, version = struct.unpack("<II", after[:8])
     cbor = zstandard.ZstdDecompressor().decompress(
         after[8:], max_output_size=50_000_000
     )
+    if len(cbor) != uncompressed_size:
+        raise ValueError(
+            f"XferJson CBOR size mismatch: header={uncompressed_size}, decompressed={len(cbor)}"
+        )
     return meta, version, cbor
 
 
@@ -97,7 +105,13 @@ def juce_memoryblock_b64decode(s: str) -> bytes:
 
 
 def build_juce_vst3_state(icomponent: bytes, ieditcontroller: bytes = b"") -> bytes:
-    """Wrap raw IComponent (and optionally IEditController) bytes for load_state."""
+    """Wrap raw IComponent (and optionally IEditController) bytes for load_state.
+
+    String-concat XML is safe here because the only interpolated content is
+    JUCE-base64 output, whose alphabet contains no XML metacharacters
+    (``< > & " '``). Do not extend this to interpolate user-supplied text
+    without proper escaping.
+    """
     xml = '<?xml version="1.0" encoding="UTF-8"?>\n<VST3PluginState>'
     xml += f"<IComponent>{juce_memoryblock_b64encode(icomponent)}</IComponent>"
     if ieditcontroller:

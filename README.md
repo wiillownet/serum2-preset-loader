@@ -99,7 +99,12 @@ M   bytes   Zstandard-compressed CBOR
 The JSON metadata differs by context:
 
 - **Preset file**: `{"fileType": "SerumPreset", "presetName": "…", "presetAuthor": "…", "tags": [...], …}`
-- **IComponent state**: `{"component": "processor", "product": "Serum2", "productVersion": "2.1.4", …}`
+- **IComponent state**: `{"component": "processor", "product": "Serum2", "productVersion": "2.1.4", "hash": "…", …}`
+
+The `hash` field is `md5(compressed_cbor)` — verified by md5'ing the
+compressed payload of a captured Serum 2.1.4 state and matching it byte-for-
+byte against the metadata header. The converter recomputes it for the
+processor-state CBOR it generates.
 
 ### Layer 3 — the CBOR payload
 
@@ -150,7 +155,7 @@ Serum re-serializing.)
 | `killEnvsGracefullyCompat` | `true` |
 | `Arp0.activeClip` | `0` (defaults to first clip; not present in preset) |
 | `productVersion` | `"2.1.4"` |
-| `version` | `10.0` |
+| `version` | `10.0` (CBOR float; not int — Serum's `getState` writes a major-7 float here) |
 
 There are also a few preset-only **sub-keys** the converter strips:
 `Macro{0..7}.name`, `FXRack{0..2}.displayName`, extra UI fields on

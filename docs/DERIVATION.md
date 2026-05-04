@@ -187,6 +187,21 @@ A few module types have UI sub-keys to strip: `Macro{i}.name`,
 
 ---
 
+### Aside: the `hash` field in the JSON metadata
+
+The IComponent metadata header contains a 32-hex-char `hash` field that
+*does* vary between captures (so it isn't a constant schema/build identifier).
+By md5'ing every plausible candidate from a captured state file, we found:
+
+```
+hash == md5(compressed_cbor_payload)
+```
+
+i.e. md5 of the Zstd-compressed CBOR bytes that follow the size+version
+header. The converter recomputes this. Empirically Serum's `setState` does not
+seem to validate the hash (it accepts blobs where we copied the wrong value),
+but computing it correctly costs nothing and matches the round-trip shape.
+
 ## Phase 6 — Validate
 
 Convert the preset, render through DawDreamer, compare audio against the

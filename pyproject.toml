@@ -23,6 +23,7 @@ dependencies = [
 
 [project.optional-dependencies]
 render = ["dawdreamer", "scipy", "numpy"]
+test = ["pytest>=7"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

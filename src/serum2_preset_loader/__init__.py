@@ -1,4 +1,6 @@
 """Convert .SerumPreset files into VST3 state blobs that DawDreamer can load."""
+from importlib.metadata import PackageNotFoundError, version as _pkg_version
+
 from .converter import (
     convert_preset_bytes,
     convert_preset_file,
@@ -10,6 +12,11 @@ from .wrappers import (
     wrap_xferjson,
 )
 
+try:
+    __version__ = _pkg_version("serum2-preset-loader")
+except PackageNotFoundError:
+    __version__ = "0+unknown"
+
 __all__ = [
     "convert_preset_bytes",
     "convert_preset_file",
@@ -18,4 +25,3 @@ __all__ = [
     "unwrap_xferjson",
     "wrap_xferjson",
 ]
-__version__ = "0.1.0"
