@@ -15,9 +15,22 @@ similar but not identical. This package translates one to the other.
 
 ## Install
 
+Not yet published to PyPI. Install directly from this repo:
+
 ```sh
-pip install serum2-preset-loader            # core converter
-pip install serum2-preset-loader[render]    # + dawdreamer/scipy/numpy
+pip install git+https://github.com/wiillownet/serum-2-preset-loader.git
+pip install "serum2-preset-loader[render] @ git+https://github.com/wiillownet/serum-2-preset-loader.git"
+```
+
+The second form pulls in the optional render extras (`dawdreamer`, `scipy`,
+`numpy`) needed by the `serum2-render` console script.
+
+For local development:
+
+```sh
+git clone https://github.com/wiillownet/serum-2-preset-loader.git
+cd serum-2-preset-loader
+pip install -e ".[render,test]"
 ```
 
 ## Usage as a library
@@ -49,10 +62,10 @@ print(meta["presetName"], meta["presetAuthor"], meta["tags"])
 
 ## Usage as a CLI
 
-Installing the `[render]` extra adds a `serum2-render` console script:
+Installing with the `[render]` extra (see Install above) adds a
+`serum2-render` console script:
 
 ```sh
-pip install 'serum2-preset-loader[render]'
 serum2-render /path/to/Serum2.vst3 "My Preset.SerumPreset" out.wav
 serum2-render --midi-note 48 --note-duration 4 --render-duration 6 \
     /path/to/Serum2.vst3 "My Preset.SerumPreset" out.wav
