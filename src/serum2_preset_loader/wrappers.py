@@ -71,30 +71,23 @@ def wrap_xferjson(metadata: dict, cbor_bytes: bytes, *, version: int = 2) -> byt
     caller's hand — avoiding the ``compress() == compress()`` cross-call
     invariant.
     """
-    meta_json = json.dumps(metadata, separators=(",", ":")).encode("utf-8")
     compressed = zstandard.ZstdCompressor().compress(cbor_bytes)
     return wrap_xferjson_precompressed(
-        meta_json, compressed,
+        metadata, compressed,
         uncompressed_size=len(cbor_bytes),
         version=version,
     )
 
 
 def wrap_xferjson_precompressed(
-    metadata: dict | bytes,
+    metadata: dict,
     compressed_cbor: bytes,
     *,
     uncompressed_size: int,
     version: int = 2,
 ) -> bytes:
-    """Emit the XferJson envelope from an already-Zstd-compressed CBOR payload.
-
-    ``metadata`` may be a dict (will be JSON-encoded) or pre-encoded JSON bytes.
-    """
-    if isinstance(metadata, dict):
-        meta_json = json.dumps(metadata, separators=(",", ":")).encode("utf-8")
-    else:
-        meta_json = metadata
+    """Emit the XferJson envelope from an already-Zstd-compressed CBOR payload."""
+    meta_json = json.dumps(metadata, separators=(",", ":")).encode("utf-8")
     return (
         XFER_MAGIC
         + struct.pack("<Q", len(meta_json))
