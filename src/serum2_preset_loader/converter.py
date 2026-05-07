@@ -200,8 +200,8 @@ def read_preset_metadata(preset_path: str) -> dict:
     """Return the JSON metadata header from a ``.SerumPreset`` file.
 
     Useful for batch-renaming, filtering by tag, or seeding an output
-    filename with the preset's display name. Cheap — does not decompress
-    the CBOR payload.
+    filename with the preset's display name. Decompresses the full CBOR
+    payload as a side effect of envelope parsing.
 
     Keys typically present: ``fileType``, ``presetName``, ``presetAuthor``,
     ``presetDescription``, ``tags``, ``product``, ``productVersion``,

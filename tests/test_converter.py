@@ -236,7 +236,7 @@ def test_convert_preset_bytes_hash_is_md5_of_compressed_cbor():
     after = icomponent[17 + json_len:]
     compressed_cbor = after[8:]
 
-    assert meta["hash"] == hashlib.md5(compressed_cbor).hexdigest()
+    assert meta["hash"] == hashlib.md5(compressed_cbor, usedforsecurity=False).hexdigest()
     assert meta["component"] == "processor"
     assert meta["productVersion"] == "2.1.4"
 

@@ -72,7 +72,7 @@ def test_metadata_hash_is_md5_of_compressed_cbor(state_blob):
 
     import json
     meta = json.loads(icomp[17:17 + json_len])
-    assert meta["hash"] == hashlib.md5(compressed_cbor).hexdigest()
+    assert meta["hash"] == hashlib.md5(compressed_cbor, usedforsecurity=False).hexdigest()
 
 
 def test_juce_b64_round_trips_real_state_payload(state_blob):
