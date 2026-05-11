@@ -12,6 +12,8 @@ from .converter import (
 )
 from .wrappers import (
     build_juce_vst3_state,
+    juce_memoryblock_b64decode,
+    juce_memoryblock_b64encode,
     unwrap_xferjson,
     wrap_xferjson,
     wrap_xferjson_precompressed,
@@ -28,6 +30,8 @@ __all__ = [
     "preset_cbor_to_processor_cbor",
     "read_preset_metadata",
     "build_juce_vst3_state",
+    "juce_memoryblock_b64decode",
+    "juce_memoryblock_b64encode",
     "unwrap_xferjson",
     "wrap_xferjson",
     "wrap_xferjson_precompressed",

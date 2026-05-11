@@ -10,6 +10,7 @@ XferJson layout, or our hash-derivation understanding fails loudly.
 from __future__ import annotations
 
 import hashlib
+import json
 import struct
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -20,6 +21,7 @@ from serum2_preset_loader.wrappers import (
     JUCE_VST3_MAGIC,
     XFER_MAGIC,
     juce_memoryblock_b64decode,
+    juce_memoryblock_b64encode,
     unwrap_xferjson,
 )
 
@@ -70,7 +72,6 @@ def test_metadata_hash_is_md5_of_compressed_cbor(state_blob):
     after = icomp[17 + json_len:]
     compressed_cbor = after[8:]
 
-    import json
     meta = json.loads(icomp[17:17 + json_len])
     assert meta["hash"] == hashlib.md5(compressed_cbor, usedforsecurity=False).hexdigest()
 
@@ -82,8 +83,6 @@ def test_juce_b64_round_trips_real_state_payload(state_blob):
     actually-Serum-shaped data, which is more thorough than synthetic
     bytes-of-range tests.
     """
-    from serum2_preset_loader.wrappers import juce_memoryblock_b64encode
-
     magic, xml_len = struct.unpack("<II", state_blob[:8])
     xml = state_blob[8:8 + xml_len].decode("utf-8")
     original = juce_memoryblock_b64decode(ET.fromstring(xml).find("IComponent").text)

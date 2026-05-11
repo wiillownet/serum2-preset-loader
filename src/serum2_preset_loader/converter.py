@@ -24,7 +24,6 @@ from .wrappers import (
 )
 
 
-# Top-level keys that exist only in the preset shape.
 _PRESET_ONLY_TOPLEVEL_KEYS: frozenset[str] = frozenset({
     # UI panels and library scratch state
     "ClipPlayer", "Filter", "SerumGUI",
@@ -35,7 +34,6 @@ _PRESET_ONLY_TOPLEVEL_KEYS: frozenset[str] = frozenset({
     "fileType", "presetName", "presetAuthor", "presetDescription",
 })
 
-# Top-level keys the processor adds that the preset doesn't carry.
 _PROCESSOR_EXTRA_TOPLEVEL: dict[str, Any] = {
     "component": "processor",
     "killEnvsGracefullyCompat": True,
@@ -61,7 +59,6 @@ PROCESSOR_FORMAT_VERSION = 10.0
 # we want to fail loudly instead of silently producing a malformed state.
 SUPPORTED_XFERJSON_VERSION = 2
 
-# Sub-keys that exist only in the preset shape, indexed by module-name prefix.
 # A "prefix" here means the module-name family followed by an integer suffix
 # (e.g. "Macro0", "PitchQuantizer3"). Using a blacklist (rather than
 # whitelisting "clip"/"plainParams") so that any new processor-side fields a
@@ -200,8 +197,7 @@ def read_preset_metadata(preset_path: str) -> dict:
     """Return the JSON metadata header from a ``.SerumPreset`` file.
 
     Useful for batch-renaming, filtering by tag, or seeding an output
-    filename with the preset's display name. Decompresses the full CBOR
-    payload as a side effect of envelope parsing.
+    filename with the preset's display name.
 
     Keys typically present: ``fileType``, ``presetName``, ``presetAuthor``,
     ``presetDescription``, ``tags``, ``product``, ``productVersion``,
