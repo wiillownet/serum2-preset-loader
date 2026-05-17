@@ -2,9 +2,6 @@
 
 Open work-items, lowest-effort first. Strikethrough or delete entries as they ship.
 
-## `_PROCESSOR_EXTRA_TOPLEVEL` mutation hardening
-Latent only — current values are primitives, so `state.update(_PROCESSOR_EXTRA_TOPLEVEL)` is safe. If anyone ever adds a nested dict to that constant, callers would share state by reference. Cheapest fix: wrap the constant with `types.MappingProxyType` at module scope, or `dict(...)` it on update.
-
 ## CLI flags: `--sample-rate`, `--bit-depth`
 `_cli.py` hardcodes 44.1 kHz and 16-bit PCM. Decide whether `serum2-render` is a quick demo (leave as-is) or a real tool (surface flags). Blocked on direction.
 

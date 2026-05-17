@@ -12,7 +12,8 @@ from __future__ import annotations
 
 import copy
 import hashlib
-from typing import Any
+from types import MappingProxyType
+from typing import Any, Mapping
 
 import cbor2
 import zstandard
@@ -34,10 +35,10 @@ _PRESET_ONLY_TOPLEVEL_KEYS: frozenset[str] = frozenset({
     "fileType", "presetName", "presetAuthor", "presetDescription",
 })
 
-_PROCESSOR_EXTRA_TOPLEVEL: dict[str, Any] = {
+_PROCESSOR_EXTRA_TOPLEVEL: Mapping[str, Any] = MappingProxyType({
     "component": "processor",
     "killEnvsGracefullyCompat": True,
-}
+})
 
 # Current Serum 2 processor-state version markers (observed in 2.1.4).
 # `PROCESSOR_FORMAT_VERSION` is intentionally a Python float — Serum's getState
