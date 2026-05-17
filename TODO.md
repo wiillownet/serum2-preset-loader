@@ -8,9 +8,6 @@ Latent only — current values are primitives, so `state.update(_PROCESSOR_EXTRA
 ## CLI flags: `--sample-rate`, `--bit-depth`
 `_cli.py` hardcodes 44.1 kHz and 16-bit PCM. Decide whether `serum2-render` is a quick demo (leave as-is) or a real tool (surface flags). Blocked on direction.
 
-## `.github/` CI matrix
-No CI today. A ~20-line `pytest` workflow across Python 3.9–3.13 would lock in the version classifiers in `pyproject.toml` and catch regressions on minor versions before users do. Mirror the `fxp-render` workflow for consistency.
-
 - [ ] [audit-validate] Decide whether `wrap_xferjson` is needed on the public surface
   - File: src/serum2_preset_loader/wrappers.py:65
   - Why deferred: Exported in `__all__` but has zero internal callers; whether external consumers rely on it (vs composing `zstd.compress` + `wrap_xferjson_precompressed` themselves) is author knowledge that can't be confirmed from inside the repo.
