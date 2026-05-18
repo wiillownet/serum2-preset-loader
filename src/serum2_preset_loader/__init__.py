@@ -15,7 +15,6 @@ from .wrappers import (
     juce_memoryblock_b64decode,
     juce_memoryblock_b64encode,
     unwrap_xferjson,
-    wrap_xferjson,
     wrap_xferjson_precompressed,
 )
 
@@ -33,7 +32,6 @@ __all__ = [
     "juce_memoryblock_b64decode",
     "juce_memoryblock_b64encode",
     "unwrap_xferjson",
-    "wrap_xferjson",
     "wrap_xferjson_precompressed",
     "PROCESSOR_FORMAT_VERSION",
     "PROCESSOR_PRODUCT_VERSION",
