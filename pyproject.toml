@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "MIT" }
 authors = [{ name = "wiillownet" }]
-keywords = ["serum", "serum2", "vst3", "preset", "dawdreamer", "audio"]
+keywords = ["serum", "serum2", "vst3", "preset", "audio"]
 classifiers = [
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.9",
@@ -33,11 +33,7 @@ Repository = "https://github.com/wiillownet/serum-2-preset-loader"
 Issues = "https://github.com/wiillownet/serum-2-preset-loader/issues"
 
 [project.optional-dependencies]
-render = ["dawdreamer", "scipy", "numpy"]
 test = ["pytest>=7"]
-
-[project.scripts]
-serum2-render = "serum2_preset_loader._cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

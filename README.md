@@ -6,6 +6,9 @@ you can render presets to audio without opening the Serum GUI.
 
 Tested against Serum 2.1.4 on macOS.
 
+For a ready-made renderer built on top of this library, see
+[vst-render](https://github.com/wiillownet/vst-render).
+
 ## Why
 
 Serum 2 ships its presets as `.SerumPreset` files (a small Zstd-compressed
@@ -19,18 +22,14 @@ Not yet published to PyPI. Install directly from this repo:
 
 ```sh
 pip install git+https://github.com/wiillownet/serum-2-preset-loader.git
-pip install "serum2-preset-loader[render] @ git+https://github.com/wiillownet/serum-2-preset-loader.git"
 ```
-
-The second form pulls in the optional render extras (`dawdreamer`, `scipy`,
-`numpy`) needed by the `serum2-render` console script.
 
 For local development:
 
 ```sh
 git clone https://github.com/wiillownet/serum-2-preset-loader.git
 cd serum-2-preset-loader
-pip install -e ".[render,test]"
+pip install -e ".[test]"
 ```
 
 ## Usage as a library
@@ -59,20 +58,6 @@ from serum2_preset_loader import read_preset_metadata
 meta = read_preset_metadata("My Preset.SerumPreset")
 print(meta["presetName"], meta["presetAuthor"], meta["tags"])
 ```
-
-## Usage as a CLI
-
-Installing with the `[render]` extra (see Install above) adds a
-`serum2-render` console script:
-
-```sh
-serum2-render /path/to/Serum2.vst3 "My Preset.SerumPreset" out.wav
-serum2-render --midi-note 48 --note-duration 4 --render-duration 6 \
-    /path/to/Serum2.vst3 "My Preset.SerumPreset" out.wav
-```
-
-`examples/render_preset.py` is a thin wrapper around the same entry point for
-folks running from a checkout.
 
 ## Targeting a different Serum build
 
@@ -223,7 +208,6 @@ attempts and the probes used to diff the two formats — see
 - Per-instance audio randomization (unison detune phase, sample start, etc.)
   means rendered audio is not bit-identical to a manual GUI load — but it's
   audibly the same patch.
-- Core conversion is dawdreamer-free; only the example renderer needs it.
 - Direct injection of `.SerumPreset` bytes via `setState` does **not** work —
   Serum silently falls back to the init patch. The CBOR translation in this
   package is required.
