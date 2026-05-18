@@ -184,7 +184,7 @@ Serum re-serializing.)
 There are also a few preset-only **sub-keys** the converter strips:
 `Macro{0..7}.name`, `FXRack{0..2}.displayName`, extra UI fields on
 `MidiClip{0..11}` (`laneTabs`, `gridWidth_Beats`, `name`, …),
-`PitchQuantizer0.scaleName`.
+`PitchQuantizer{n}.scaleName`.
 
 ### Putting it back together
 

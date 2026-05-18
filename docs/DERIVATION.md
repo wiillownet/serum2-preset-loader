@@ -145,8 +145,13 @@ This is the actual derivation. With two known-good captures in hand
 
 ```python
 import cbor2
+
+# Both blobs end as zstd-compressed CBOR; the preset is reachable directly
+# off disk, the IComponent is one JUCE-envelope hop further in (u32 magic +
+# u32 xml_len + xml containing a juce-base64 <IComponent>). See
+# `_extract_icomponent` in tests/test_real_preset_fixture.py for the layout.
 preset_cbor    = cbor2.loads(unwrap_xferjson(open("preset.SerumPreset","rb").read())[2])
-processor_cbor = cbor2.loads(unwrap_xferjson(juce_decode_state("state_loaded.bin"))[2])
+processor_cbor = cbor2.loads(unwrap_xferjson(extract_icomponent("state_loaded.bin"))[2])
 ```
 
 **Top-level diff (175 vs 163 keys):**
@@ -254,7 +259,7 @@ init patch (RMS matches the no-load baseline), follow this playbook:
    `Macro0`, `ModSlot0`. For each: are `plainParams` the same shape? Is the
    `"default"` sentinel still in use? Are there new sub-keys to strip or pass
    through?
-7. **Update version markers.** `_PROCESSOR_PRODUCT_VERSION` and
-   `_PROCESSOR_FORMAT_VERSION` in `converter.py`.
+7. **Update version markers.** `PROCESSOR_PRODUCT_VERSION` and
+   `PROCESSOR_FORMAT_VERSION` in `converter.py`.
 8. **Re-run the validation table from Phase 6.** Converter RMS within ~5% of
    GUI-loaded RMS, both clearly distinct from no-load RMS = pass.
