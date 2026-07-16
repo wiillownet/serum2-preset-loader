@@ -1,4 +1,4 @@
-# serum-2-preset-loader
+# serum2-preset-loader
 
 Convert `.SerumPreset` files into VST3 state blobs that
 [DawDreamer](https://github.com/DBraun/DawDreamer) can load into Serum 2 — so
@@ -21,14 +21,14 @@ similar but not identical. This package translates one to the other.
 Not yet published to PyPI. Install directly from this repo:
 
 ```sh
-pip install git+https://github.com/wiillownet/serum-2-preset-loader.git
+pip install git+https://github.com/wiillownet/serum2-preset-loader.git
 ```
 
 For local development:
 
 ```sh
-git clone https://github.com/wiillownet/serum-2-preset-loader.git
-cd serum-2-preset-loader
+git clone https://github.com/wiillownet/serum2-preset-loader.git
+cd serum2-preset-loader
 pip install -e ".[test]"
 ```
 

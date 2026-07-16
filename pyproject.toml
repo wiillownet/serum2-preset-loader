@@ -27,9 +27,9 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/wiillownet/serum-2-preset-loader"
-Repository = "https://github.com/wiillownet/serum-2-preset-loader"
-Issues = "https://github.com/wiillownet/serum-2-preset-loader/issues"
+Homepage = "https://github.com/wiillownet/serum2-preset-loader"
+Repository = "https://github.com/wiillownet/serum2-preset-loader"
+Issues = "https://github.com/wiillownet/serum2-preset-loader/issues"
 
 [project.optional-dependencies]
 test = ["pytest>=7"]
