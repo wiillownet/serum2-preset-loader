@@ -1,5 +1,10 @@
 # serum2-preset-loader
 
+[![PyPI](https://img.shields.io/pypi/v/serum2-preset-loader)](https://pypi.org/project/serum2-preset-loader/)
+[![Python versions](https://img.shields.io/pypi/pyversions/serum2-preset-loader)](https://pypi.org/project/serum2-preset-loader/)
+[![tests](https://github.com/wiillownet/serum2-preset-loader/actions/workflows/tests.yml/badge.svg)](https://github.com/wiillownet/serum2-preset-loader/actions/workflows/tests.yml)
+[![license](https://img.shields.io/pypi/l/serum2-preset-loader)](LICENSE)
+
 Convert `.SerumPreset` files into VST3 state blobs that
 [DawDreamer](https://github.com/DBraun/DawDreamer) can load into Serum 2 — so
 you can render presets to audio without opening the Serum GUI.
@@ -18,10 +23,8 @@ similar but not identical. This package translates one to the other.
 
 ## Install
 
-Not yet published to PyPI. Install directly from this repo:
-
 ```sh
-pip install git+https://github.com/wiillownet/serum2-preset-loader.git
+pip install serum2-preset-loader
 ```
 
 For local development:

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "serum2-preset-loader"
-version = "0.1.1"
+version = "0.1.2"
 description = "Convert .SerumPreset files into VST3 state blobs that DawDreamer can load into Serum 2."
 readme = "README.md"
 requires-python = ">=3.9"
