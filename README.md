@@ -7,7 +7,7 @@ you can render presets to audio without opening the Serum GUI.
 Tested against Serum 2.1.4 on macOS.
 
 For a ready-made renderer built on top of this library, see
-[vst-render](https://github.com/wiillownet/vst-render).
+[serum-render](https://github.com/wiillownet/serum-render).
 
 ## Why
 
