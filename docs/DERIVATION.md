@@ -5,8 +5,8 @@ reverse-engineered. Read this if you need to update the converter for a future
 Serum 2 version that changes the on-disk schema, or if you just want to
 understand *why* the converter does what it does.
 
-The investigation went through five phases. Each phase produced a small probe
-script; you can re-run the same playbook on a new Serum build.
+The investigation went through seven phases (0–6). Each phase produced a small
+probe script; you can re-run the same playbook on a new Serum build.
 
 ---
 
@@ -151,7 +151,7 @@ import cbor2
 # u32 xml_len + xml containing a juce-base64 <IComponent>). See
 # `_extract_icomponent` in tests/test_real_preset_fixture.py for the layout.
 preset_cbor    = cbor2.loads(unwrap_xferjson(open("preset.SerumPreset","rb").read())[2])
-processor_cbor = cbor2.loads(unwrap_xferjson(extract_icomponent("state_loaded.bin"))[2])
+processor_cbor = cbor2.loads(unwrap_xferjson(_extract_icomponent(open("state_loaded.bin","rb").read()))[2])
 ```
 
 **Top-level diff (175 vs 163 keys):**
@@ -187,8 +187,9 @@ then the rule is just "rewrite the sentinel; pass everything else through."
 - 46 modules with real overrides → pass-through.
 
 A few module types have UI sub-keys to strip: `Macro{i}.name`,
-`FXRack{i}.displayName`, and extra fields on `MidiClip1` (`laneTabs`,
-`gridWidth_Beats`, etc.).
+`FXRack{i}.displayName`, and extra fields on `MidiClip{i}` (`laneTabs`,
+`gridWidth_Beats`, etc. — observed on `MidiClip1` in the test preset; the
+converter strips them from every `MidiClip` index).
 
 ---
 
@@ -206,6 +207,8 @@ i.e. md5 of the Zstd-compressed CBOR bytes that follow the size+version
 header. The converter recomputes this. Empirically Serum's `setState` does not
 seem to validate the hash (it accepts blobs where we copied the wrong value),
 but computing it correctly costs nothing and matches the round-trip shape.
+
+---
 
 ## Phase 6 — Validate
 
