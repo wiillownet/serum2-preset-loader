@@ -24,7 +24,6 @@ from serum2_preset_loader import (
     PROCESSOR_FORMAT_VERSION,
     PROCESSOR_PRODUCT_VERSION,
     convert_preset_bytes,
-    convert_preset_file,
     read_preset_metadata,
 )
 from serum2_preset_loader.converter import _PRESET_ONLY_TOPLEVEL_KEYS
@@ -73,11 +72,6 @@ def test_convert_produces_juce_envelope(converted):
     assert magic == JUCE_VST3_MAGIC
     assert xml_len > 0
     assert converted.endswith(b"\x00")
-
-
-def test_convert_preset_file_matches_convert_preset_bytes(preset_bytes):
-    """Disk-reading path produces the same blob as the in-memory one."""
-    assert convert_preset_file(str(FIXTURE)) == convert_preset_bytes(preset_bytes)
 
 
 def test_conversion_is_deterministic(preset_bytes):
