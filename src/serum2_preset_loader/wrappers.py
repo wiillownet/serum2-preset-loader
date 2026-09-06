@@ -1,6 +1,8 @@
 """Codecs for the wrapping formats Serum 2 uses around its CBOR payloads."""
 from __future__ import annotations
 
+import base64
+
 import json
 import struct
 
@@ -110,18 +112,33 @@ _JUCE_B64_ALPHABET = ".ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz01234
 _JUCE_B64_INDEX = {c: i for i, c in enumerate(_JUCE_B64_ALPHABET)}
 
 
+# The alphabet constant has 65 symbols; only indices 0..63 are values.
+# JUCE reads the byte stream LSB-first and puts the first stream bit in the
+# LOW bit of each 6-bit char; standard base64 reads MSB-first and puts it in
+# the HIGH bit. So JUCE(data) == std_b64(bitrev8(data)) with each char's 6-bit
+# value reversed, minus the '=' padding. Both reversals are table lookups, so
+# the whole codec runs in C. The previous per-bit Python loop took ~21 minutes
+# on a 160 MB sample-based preset; this takes well under a second.
+_BITREV8 = bytes.maketrans(
+    bytes(range(256)),
+    bytes(int(f"{i:08b}"[::-1], 2) for i in range(256)),
+)
+_STD_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+
+
+def _rev6(v: int) -> int:
+    return int(f"{v:06b}"[::-1], 2)
+
+
+# Standard char at index j carries value j MSB-first; JUCE's char for the same
+# six stream bits has value rev6(j).
+_STD_TO_JUCE = str.maketrans(_STD_ALPHABET, "".join(_JUCE_B64_ALPHABET[_rev6(j)] for j in range(64)))
+_JUCE_TO_STD = str.maketrans(_JUCE_B64_ALPHABET[:64], "".join(_STD_ALPHABET[_rev6(j)] for j in range(64)))
+
+
 def juce_memoryblock_b64encode(data: bytes) -> str:
-    num_chars = ((len(data) * 8) + 5) // 6
-    out = [str(len(data)), "."]
-    for i in range(num_chars):
-        bit = i * 6
-        v = 0
-        for b in range(6):
-            byte_i = (bit + b) >> 3
-            if byte_i < len(data) and (data[byte_i] >> ((bit + b) & 7)) & 1:
-                v |= 1 << b
-        out.append(_JUCE_B64_ALPHABET[v])
-    return "".join(out)
+    body = base64.b64encode(bytes(data).translate(_BITREV8)).decode("ascii").rstrip("=")
+    return f"{len(data)}.{body.translate(_STD_TO_JUCE)}"
 
 
 def juce_memoryblock_b64decode(s: str) -> bytes:
@@ -144,20 +161,15 @@ def juce_memoryblock_b64decode(s: str) -> bytes:
             f"JUCE base64: body length {len(body)} doesn't match length prefix "
             f"(expected {expected_chars} chars for {num_bytes} bytes)"
         )
-    out = bytearray(num_bytes)
-    bit_pos = 0
-    for c in body:
-        idx = _JUCE_B64_INDEX.get(c)
-        if idx is None:
-            raise ValueError(f"JUCE base64: bad character {c!r}")
-        for b in range(6):
-            byte_i = (bit_pos + b) >> 3
-            if byte_i >= num_bytes:
-                break
-            if (idx >> b) & 1:
-                out[byte_i] |= 1 << ((bit_pos + b) & 7)
-        bit_pos += 6
-    return bytes(out)
+    bad = set(body) - set(_JUCE_B64_ALPHABET[:64])
+    if bad:
+        raise ValueError(f"JUCE base64: bad character {sorted(bad)[0]!r}")
+    std = body.translate(_JUCE_TO_STD) + "=" * (-len(body) % 4)
+    # A final partial char can carry junk in its padding bits; standard
+    # base64 would reject that, JUCE ignores it. validate=False plus the
+    # length slice reproduces JUCE.
+    raw = base64.b64decode(std, validate=False)[:num_bytes]
+    return raw.translate(_BITREV8)
 
 
 def build_juce_vst3_state(icomponent: bytes, ieditcontroller: bytes = b"") -> bytes:

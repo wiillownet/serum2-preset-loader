@@ -227,3 +227,48 @@ def test_build_juce_vst3_state_includes_ieditcontroller():
     ec_el = root.find("IEditController")
     assert ic_el is not None and juce_memoryblock_b64decode(ic_el.text) == icomponent
     assert ec_el is not None and juce_memoryblock_b64decode(ec_el.text) == iedit
+
+
+# ─── parity with the original per-bit implementation ─────────────────────
+
+def _reference_encode(data: bytes) -> str:
+    """The pre-0.1.3 bit-by-bit encoder, kept as the oracle."""
+    from serum2_preset_loader.wrappers import _JUCE_B64_ALPHABET
+    num_chars = ((len(data) * 8) + 5) // 6
+    out = [str(len(data)), "."]
+    for i in range(num_chars):
+        bit = i * 6
+        v = 0
+        for b in range(6):
+            byte_i = (bit + b) >> 3
+            if byte_i < len(data) and (data[byte_i] >> ((bit + b) & 7)) & 1:
+                v |= 1 << b
+        out.append(_JUCE_B64_ALPHABET[v])
+    return "".join(out)
+
+
+@pytest.mark.parametrize("n", list(range(0, 40)) + [255, 256, 257, 1000, 4096, 12345])
+def test_fast_codec_matches_reference_at_every_length_mod_3(n):
+    import random
+    rng = random.Random(n)
+    data = bytes(rng.getrandbits(8) for _ in range(n))
+    enc = juce_memoryblock_b64encode(data)
+    assert enc == _reference_encode(data)
+    assert juce_memoryblock_b64decode(enc) == data
+
+
+def test_decode_tolerates_junk_in_trailing_pad_bits():
+    """JUCE never reads the pad bits, so a writer may leave them set."""
+    enc = juce_memoryblock_b64encode(b"\xff")  # "1." + 2 chars; 2nd char uses 2 of 6 bits
+    body = enc[2:]
+    from serum2_preset_loader.wrappers import _JUCE_B64_ALPHABET, _JUCE_B64_INDEX
+    dirty = body[0] + _JUCE_B64_ALPHABET[_JUCE_B64_INDEX[body[1]] | 0b111100]
+    assert juce_memoryblock_b64decode("1." + dirty) == b"\xff"
+
+
+def test_fast_codec_is_fast():
+    import os, time
+    data = os.urandom(8_000_000)
+    t = time.perf_counter()
+    assert juce_memoryblock_b64decode(juce_memoryblock_b64encode(data)) == data
+    assert time.perf_counter() - t < 2.0
