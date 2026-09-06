@@ -323,3 +323,24 @@ def test_convert_preset_file_matches_convert_preset_bytes():
         from_file = convert_preset_file(path)
     from_bytes = convert_preset_bytes(blob)
     assert from_file == from_bytes
+
+
+def test_conversion_does_not_mutate_the_input_and_shares_scalar_lists():
+    """The copy-on-write walk must leave the caller's dict untouched, and
+    must not copy a list of scalars (sample data runs to millions of them)."""
+    from serum2_preset_loader.converter import preset_cbor_to_processor_cbor
+
+    samples = [0.0, 0.5, -0.5] * 1000
+    src = {
+        "Osc0": {"plainParams": "default", "wave": samples},
+        "nested": [{"plainParams": "default"}, {"keep": [1, 2]}],
+        "Arp0": {"x": 1},
+    }
+    out = preset_cbor_to_processor_cbor(src)
+    assert src["Osc0"]["plainParams"] == "default"
+    assert src["nested"][0]["plainParams"] == "default"
+    assert "activeClip" not in src["Arp0"]
+    assert out["Osc0"]["plainParams"] == {}
+    assert out["nested"][0]["plainParams"] == {}
+    assert out["Arp0"]["activeClip"] == 0
+    assert out["Osc0"]["wave"] is samples
