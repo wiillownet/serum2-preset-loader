@@ -80,6 +80,9 @@ def _matches_prefix_with_index(key: str, prefix: str) -> bool:
     return key.startswith(prefix) and key[len(prefix):].isdigit()
 
 
+_CONTAINERS = frozenset({dict, list})
+
+
 def _copy_expanding_plainparams(obj: Any) -> Any:
     """Copy-on-write walk: a new dict for every dict, ``plainParams: "default"``
     replaced with ``{}`` on the way, and lists rebuilt only when they hold a
@@ -88,8 +91,7 @@ def _copy_expanding_plainparams(obj: Any) -> Any:
     immutable and nothing downstream mutates lists.
 
     Replaces ``copy.deepcopy`` plus an in-place walk: on a 160 MB preset those
-    two cost ~100 s; this pass costs ~3 s, all of it in the one scan that
-    checks each big list for containers.
+    two cost ~100 s; this pass costs about a second.
     """
     if isinstance(obj, dict):
         return {
@@ -97,7 +99,8 @@ def _copy_expanding_plainparams(obj: Any) -> Any:
             for k, v in obj.items()
         }
     if isinstance(obj, list):
-        if any(isinstance(x, (dict, list)) for x in obj):
+        # set(map(type, ...)) runs in C; a genexpr over 41M floats does not.
+        if not set(map(type, obj)).isdisjoint(_CONTAINERS):
             return [_copy_expanding_plainparams(x) for x in obj]
         return obj
     return obj
