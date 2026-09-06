@@ -11,6 +11,7 @@ Mapping the two shapes is a small, mostly mechanical transform.
 from __future__ import annotations
 
 import hashlib
+import struct
 from types import MappingProxyType
 from typing import Any, Mapping
 
@@ -18,6 +19,7 @@ import cbor2
 import zstandard
 
 from .wrappers import (
+    _parse_header,
     build_juce_vst3_state,
     unwrap_xferjson,
     wrap_xferjson_precompressed,
@@ -180,8 +182,13 @@ def convert_preset_bytes(preset_bytes: bytes) -> bytes:
     )
     _validate_preset_filetype(preset_meta)
     preset_dict = cbor2.loads(preset_cbor_bytes)
+    del preset_cbor_bytes
     proc_dict = preset_cbor_to_processor_cbor(preset_dict)
+    del preset_dict
     proc_cbor = cbor2.dumps(proc_dict)
+    # The decoded tree of a sample-based preset is ~2 GB of float objects;
+    # drop it before the compress/base64 copies below stack on top of it.
+    del proc_dict
 
     # Compress exactly once: the same compressed bytes are both md5'd for the
     # `hash` metadata field and embedded in the XferJson envelope. This avoids
@@ -211,6 +218,12 @@ def read_preset_metadata(preset_path: str) -> dict:
     ``presetDescription``, ``tags``, ``product``, ``productVersion``,
     ``hash``, ``vendor``, ``url``, ``version``.
     """
+    # Header only: no reason to decompress a 200 MB sample payload for it.
     with open(preset_path, "rb") as f:
-        meta, _format_ver, _cbor = unwrap_xferjson(f.read())
+        head = f.read(17)
+        if len(head) < 17:
+            raise ValueError(f"XferJson blob too short ({len(head)} bytes)")
+        json_len = struct.unpack("<Q", head[9:17])[0]
+        blob = head + f.read(json_len + 8)
+    meta, _off = _parse_header(blob)
     return meta

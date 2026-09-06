@@ -20,6 +20,7 @@ from serum2_preset_loader import (
 )
 from serum2_preset_loader.wrappers import (
     XFER_MAGIC,
+    _parse_header,
     juce_memoryblock_b64decode,
     unwrap_xferjson,
 )
@@ -344,3 +345,17 @@ def test_conversion_does_not_mutate_the_input_and_shares_scalar_lists():
     assert out["nested"][0]["plainParams"] == {}
     assert out["Arp0"]["activeClip"] == 0
     assert out["Osc0"]["wave"] is samples
+
+
+def test_read_preset_metadata_does_not_touch_payload():
+    # Header only: a corrupt compressed payload must not matter.
+    blob = _make_minimal_preset_file()
+    meta, off = _parse_header(blob)
+    junk = blob[:off + 8] + b"\xff" * 64
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        path = os.path.join(tmp_dir, "preset.SerumPreset")
+        with open(path, "wb") as f:
+            f.write(junk)
+        assert read_preset_metadata(path) == meta
+        with pytest.raises(ValueError):
+            convert_preset_file(path)

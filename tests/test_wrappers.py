@@ -272,3 +272,23 @@ def test_fast_codec_is_fast():
     t = time.perf_counter()
     assert juce_memoryblock_b64decode(juce_memoryblock_b64encode(data)) == data
     assert time.perf_counter() - t < 2.0
+
+
+def test_xferjson_accepts_memoryview_input():
+    blob = wrap_xferjson({"a": 1}, b"\xa0")
+    assert unwrap_xferjson(memoryview(blob)) == unwrap_xferjson(blob)
+
+
+def test_xferjson_sizeless_frame_bounded_by_header():
+    # A frame without a content size relies on max_output_size, which now
+    # comes from the header. Correct header: decompresses. Lying header
+    # (too small): zstd stops short and the size check raises.
+    import struct
+    import zstandard
+    payload = b"\xa0" * 100_000
+    compressed = zstandard.ZstdCompressor(write_content_size=False).compress(payload)
+    good = wrap_xferjson_precompressed({"a": 1}, compressed, uncompressed_size=len(payload))
+    assert unwrap_xferjson(good)[2] == payload
+    bad = wrap_xferjson_precompressed({"a": 1}, compressed, uncompressed_size=10)
+    with pytest.raises(ValueError):
+        unwrap_xferjson(bad)

@@ -24,6 +24,23 @@ import zstandard
 XFER_MAGIC = b"XferJson\x00"
 
 
+def _parse_header(blob: bytes) -> tuple[dict, int]:
+    """Return (metadata_dict, offset_of_cbor_header). Validates magic and JSON only."""
+    if len(blob) < 17:
+        raise ValueError(f"XferJson blob too short ({len(blob)} bytes)")
+    if bytes(blob[:9]) != XFER_MAGIC:
+        raise ValueError(f"not an XferJson blob: magic={bytes(blob[:9])!r}")
+    json_len = struct.unpack("<Q", blob[9:17])[0]
+    if len(blob) < 17 + json_len + 8:
+        raise ValueError("XferJson blob truncated before CBOR header")
+    meta = json.loads(bytes(blob[17:17 + json_len]))
+    if not isinstance(meta, dict):
+        raise ValueError(
+            f"XferJson metadata must be a JSON object, got {type(meta).__name__}"
+        )
+    return meta, 17 + json_len
+
+
 def unwrap_xferjson(
     blob: bytes, *, expected_version: int | None = None
 ) -> tuple[dict, int, bytes]:
@@ -33,27 +50,22 @@ def unwrap_xferjson(
     embedded version differs — useful so any caller (not just the preset
     converter) can opt into the same guard.
     """
-    if len(blob) < 17:
-        raise ValueError(f"XferJson blob too short ({len(blob)} bytes)")
-    if blob[:9] != XFER_MAGIC:
-        raise ValueError(f"not an XferJson blob: magic={blob[:9]!r}")
-    json_len = struct.unpack("<Q", blob[9:17])[0]
-    if len(blob) < 17 + json_len + 8:
-        raise ValueError("XferJson blob truncated before CBOR header")
-    meta = json.loads(blob[17:17 + json_len])
-    if not isinstance(meta, dict):
-        raise ValueError(
-            f"XferJson metadata must be a JSON object, got {type(meta).__name__}"
-        )
-    after = blob[17 + json_len:]
+    meta, off = _parse_header(blob)
+    # memoryview: slicing a 160 MB sample-based preset as bytes copied it
+    # twice before decompression started.
+    after = memoryview(blob)[off:]
     uncompressed_size, version = struct.unpack("<II", after[:8])
     if expected_version is not None and version != expected_version:
         raise ValueError(
             f"unsupported XferJson format version {version}; expected {expected_version}"
         )
     try:
+        # The header's own size is the output bound. A frame that carries its
+        # content size (Serum's always do) ignores max_output_size anyway;
+        # one that does not is capped at what the header claims and then
+        # checked below.
         cbor = zstandard.ZstdDecompressor().decompress(
-            after[8:], max_output_size=50_000_000
+            after[8:], max_output_size=uncompressed_size
         )
     except zstandard.ZstdError as e:
         raise ValueError(f"XferJson zstd payload corrupt: {e}") from e
