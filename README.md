@@ -5,9 +5,10 @@
 [![tests](https://github.com/wiillownet/serum2-preset-loader/actions/workflows/tests.yml/badge.svg)](https://github.com/wiillownet/serum2-preset-loader/actions/workflows/tests.yml)
 [![license](https://img.shields.io/pypi/l/serum2-preset-loader)](LICENSE)
 
-Convert `.SerumPreset` files into VST3 state blobs that
-[DawDreamer](https://github.com/DBraun/DawDreamer) can load into Serum 2 — so
-you can render presets to audio without opening the Serum GUI.
+Read, write and convert Serum 2 `.SerumPreset` files. Convert presets into
+VST3 state blobs that [DawDreamer](https://github.com/DBraun/DawDreamer) can
+load into Serum 2 — so you can render presets to audio without opening the
+Serum GUI — and decode, edit and re-encode the preset files themselves.
 
 Tested against Serum 2.1.4 on macOS.
 
@@ -88,6 +89,39 @@ roughly 7 GB in one process. If you run conversions in a worker pool over
 files you don't trust, also set a per-worker memory limit (for example
 `resource.setrlimit(resource.RLIMIT_AS, ...)` in the worker initializer on
 Linux).
+
+## Reading and writing presets
+
+```python
+from serum2_preset_loader import decode_preset_file, write_preset_file
+
+header, tree = decode_preset_file("My Preset.SerumPreset")
+tree["VoiceFilter0"]["plainParams"]["kParamFreq"] = 0.25
+header["presetName"] = "My Preset (darker)"
+write_preset_file("My Preset (darker).SerumPreset", header, tree)
+```
+
+`header` is the JSON metadata; `tree` is the decoded CBOR, keyed by module
+(`Oscillator0`, `Env0`, `VoiceFilter0`, `ModSlot0`, …). Values are in Serum's
+own units, not the 0–1 range a DAW sees, and modules left at their defaults
+hold `plainParams: "default"` rather than a list of values. Which fields exist
+and what they mean is still being mapped; the format is reverse-engineered.
+
+The `hash` in the header is recomputed on write. The CBOR is re-encoded
+byte-for-byte the way Serum writes it (32-bit floats where the value fits,
+64-bit otherwise), so an unedited preset round-trips to identical CBOR. The
+Zstd stream around it differs from Serum's, so files are not byte-identical
+overall.
+
+### Rendering an edited preset without writing a file
+
+```python
+from serum2_preset_loader import decode_preset_file, convert_preset_tree
+
+_header, tree = decode_preset_file("My Preset.SerumPreset")
+tree["Oscillator0"]["WTOsc0"]["plainParams"]["kParamTablePos"] = 20.0
+state_blob = convert_preset_tree(tree)   # same output as convert_preset_bytes
+```
 
 ## Targeting a different Serum build
 

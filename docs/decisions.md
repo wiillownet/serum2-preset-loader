@@ -43,3 +43,19 @@
 
 **Alternatives considered:** Raising the floor to `cbor2>=6`, which fixes both without code but drops support for environments pinned to cbor2 5. Catching `RecursionError` in the converter, which fixes only one of the two and leaves non-plain values reaching `cbor2.dumps`.
 
+## [2026-10-22] Grow into a two-way codec instead of starting a separate package
+
+**Decision:** The package now reads and writes `.SerumPreset` files (`decode_preset_*`, `encode_preset`, `write_preset_file`) and converts edited trees in memory (`convert_preset_tree`), alongside the existing preset-to-state converter. Released as 0.2.0, an API addition.
+
+**Reason:** A preset generator needs to edit presets and render the variants. The envelope, hash and CBOR-shape knowledge already lives here and serum-render already depends on it; a second package would duplicate reverse-engineered format knowledge that has to change in step whenever Serum does.
+
+**Alternatives considered:** A separate codec package, cleaner in name but two packages tracking one undocumented format. KennethWussmann's serum-preset-packager, which works through JSON and leaves the same field meanings unknown.
+
+## [2026-10-22] Encode CBOR with Serum's float widths; leave the converter on cbor2
+
+**Decision:** `encode_cbor` writes each float as 32-bit when it round-trips exactly and 64-bit otherwise, which reproduces Serum's CBOR byte-for-byte on the test preset. Preset writing uses it. `convert_preset_*` keeps using `cbor2.dumps` (all 64-bit).
+
+**Reason:** cbor2 always writes 64-bit floats, changing every float in a written preset (7823 → 8151 bytes on the fixture). Serum's `setState` already accepts the converter's 64-bit output, and switching would change converted bytes that serum-render users may have pinned against, for no gain.
+
+**Alternatives considered:** Using `encode_cbor` in the converter too. Revisit if Serum ever rejects 64-bit floats in state.
+

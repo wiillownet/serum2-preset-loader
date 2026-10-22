@@ -184,10 +184,30 @@ def convert_preset_bytes(preset_bytes: bytes) -> bytes:
         preset_bytes, expected_version=SUPPORTED_XFERJSON_VERSION
     )
     _validate_preset_filetype(preset_meta)
-    preset_dict = _loads_cbor_tree(preset_cbor_bytes)
+    holder = [_loads_cbor_tree(preset_cbor_bytes)]
     del preset_cbor_bytes
-    proc_dict = preset_cbor_to_processor_cbor(preset_dict)
-    del preset_dict
+    return _convert_owned_tree(holder)
+
+
+def convert_preset_tree(preset_dict: dict) -> bytes:
+    """Convert an already-decoded preset tree to a VST3 state blob.
+
+    For edit-and-render loops: decode a preset once with
+    :func:`decode_preset_file`, change fields in the tree, and convert each
+    variant here without writing a ``.SerumPreset`` to disk. The tree is not
+    modified. Output is identical to :func:`convert_preset_bytes` on a file
+    holding the same tree.
+    """
+    return _convert_owned_tree([preset_dict])
+
+
+def _convert_owned_tree(holder: list) -> bytes:
+    """Shared body. ``holder`` is a one-element list so this frame can drop
+    the last reference to the decoded tree once the processor tree has it —
+    on a sample-based preset that frees ~2 GB before compression starts.
+    :func:`convert_preset_tree` callers keep their own reference, so nothing
+    is freed early on that path."""
+    proc_dict = preset_cbor_to_processor_cbor(holder.pop())
     proc_cbor = cbor2.dumps(proc_dict)
     # The decoded tree of a sample-based preset is ~2 GB of float objects;
     # drop it before the compress/base64 copies below stack on top of it.
