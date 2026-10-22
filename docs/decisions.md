@@ -18,3 +18,12 @@
 **Reason:** A sample-based preset decodes to ~41 million Python floats; every extra live reference to that tree, or extra copy of the 160 MB input, stacks another gigabyte on the worker converting it. What remains is the cost of decoding the tree at all.
 
 **Alternatives considered:** Transforming the CBOR at the byte level without decoding the sample arrays, the only way below ~2 GB. It means a streaming CBOR rewriter for a change that is a handful of key edits; not worth it until a machine cannot run the current shape at all.
+
+## [2026-10-22] Treat every preset as untrusted; one exception type for bad input
+
+**Decision:** Corrupt or hostile input raises `ValueError` everywhere (`convert_preset_*`, `read_preset_metadata`, `unwrap_xferjson`). Declared sizes are checked before allocation: header JSON ≤ 16 MiB, decompressed CBOR ≤ 1 GiB, and the Zstd frame's own declared size must equal the header's. CBOR shared references (tags 28/29) are rejected. The limits are private constants, so this ships as 0.1.4.
+
+**Reason:** serum-render runs this over folders of downloaded presets in worker pools. A 13 KB file declaring a 400 MiB frame allocated all of it before the size check (`decompress()` honours the frame's declared size and ignores `max_output_size`); a text file passed to `read_preset_metadata` raised `MemoryError`; a 207-byte file of shared references made conversion hang; and cbor2's errors are not `ValueError`s. Each of these is an OOM kill or an uncaught exception in a worker rather than one skipped preset.
+
+**Alternatives considered:** Streaming decompression with a read cap (`stream_reader`), which bounds memory without trusting the frame but copies the output once more; checking the declared size first gets the same bound with the existing single allocation. Rejecting tags 28/29 at decode via `semantic_decoders`, which cbor2 5.x (still allowed by the `>=5.4` floor) does not support; a post-decode identity walk works on every version.
+

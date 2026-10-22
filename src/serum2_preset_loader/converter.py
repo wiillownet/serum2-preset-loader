@@ -19,7 +19,10 @@ import cbor2
 import zstandard
 
 from .wrappers import (
+    XFER_MAGIC,
+    _check_header_len,
     _parse_header,
+    _loads_cbor_tree,
     build_juce_vst3_state,
     unwrap_xferjson,
     wrap_xferjson_precompressed,
@@ -181,7 +184,7 @@ def convert_preset_bytes(preset_bytes: bytes) -> bytes:
         preset_bytes, expected_version=SUPPORTED_XFERJSON_VERSION
     )
     _validate_preset_filetype(preset_meta)
-    preset_dict = cbor2.loads(preset_cbor_bytes)
+    preset_dict = _loads_cbor_tree(preset_cbor_bytes)
     del preset_cbor_bytes
     proc_dict = preset_cbor_to_processor_cbor(preset_dict)
     del preset_dict
@@ -217,13 +220,21 @@ def read_preset_metadata(preset_path: str) -> dict:
     Keys typically present: ``fileType``, ``presetName``, ``presetAuthor``,
     ``presetDescription``, ``tags``, ``product``, ``productVersion``,
     ``hash``, ``vendor``, ``url``, ``version``.
+
+    Raises ``ValueError`` for a file that is not an XferJson blob or whose
+    header is truncated or corrupt, and ``OSError`` if the file can't be read.
     """
     # Header only: no reason to decompress a 200 MB sample payload for it.
     with open(preset_path, "rb") as f:
         head = f.read(17)
         if len(head) < 17:
             raise ValueError(f"XferJson blob too short ({len(head)} bytes)")
+        # Check magic and the declared length before reading that many bytes:
+        # in any other file, bytes 9..17 are an arbitrary 64-bit number.
+        if head[:9] != XFER_MAGIC:
+            raise ValueError(f"not an XferJson blob: magic={head[:9]!r}")
         json_len = struct.unpack("<Q", head[9:17])[0]
+        _check_header_len(json_len)
         blob = head + f.read(json_len + 8)
     meta, _off = _parse_header(blob)
     return meta

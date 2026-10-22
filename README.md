@@ -62,6 +62,17 @@ meta = read_preset_metadata("My Preset.SerumPreset")
 print(meta["presetName"], meta["presetAuthor"], meta["tags"])
 ```
 
+## Untrusted files
+
+Every corrupt, truncated or hostile input raises `ValueError` (or `OSError`
+if the file can't be read), so a batch loop can catch one exception type.
+Sizes the file declares are checked before anything is allocated: the JSON
+header is capped at 16 MiB and the decompressed CBOR at 1 GiB, and a Zstd
+frame whose declared size disagrees with the header is rejected without
+being decompressed. CBOR shared references (tags 28/29), which Serum does not
+write, are rejected because they can describe cyclic or exponentially large
+trees in a few hundred bytes.
+
 ## Targeting a different Serum build
 
 The version markers Serum embeds in the processor-state CBOR are exposed as
