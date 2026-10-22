@@ -197,16 +197,21 @@ def convert_preset_tree(preset_dict: dict) -> bytes:
     variant here without writing a ``.SerumPreset`` to disk. The tree is not
     modified. Output is identical to :func:`convert_preset_bytes` on a file
     holding the same tree.
+
+    The caller still holds the tree, so unlike :func:`convert_preset_bytes`
+    it stays alive through compression: peak memory is higher on
+    sample-based presets.
     """
+    if not isinstance(preset_dict, dict):
+        raise TypeError(f"preset tree must be a dict, got {type(preset_dict).__name__}")
     return _convert_owned_tree([preset_dict])
 
 
 def _convert_owned_tree(holder: list) -> bytes:
-    """Shared body. ``holder`` is a one-element list so this frame can drop
-    the last reference to the decoded tree once the processor tree has it —
-    on a sample-based preset that frees ~2 GB before compression starts.
-    :func:`convert_preset_tree` callers keep their own reference, so nothing
-    is freed early on that path."""
+    """Shared body. ``holder`` is a one-element list so this frame holds the
+    only reference to the decoded tree. The processor tree shares its sample
+    lists, so once ``proc_dict`` is deleted below, nothing keeps the decoded
+    sample arrays alive during compression."""
     proc_dict = preset_cbor_to_processor_cbor(holder.pop())
     proc_cbor = cbor2.dumps(proc_dict)
     # The decoded tree of a sample-based preset is ~2 GB of float objects;

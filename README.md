@@ -102,16 +102,23 @@ write_preset_file("My Preset (darker).SerumPreset", header, tree)
 ```
 
 `header` is the JSON metadata; `tree` is the decoded CBOR, keyed by module
-(`Oscillator0`, `Env0`, `VoiceFilter0`, `ModSlot0`, …). Values are in Serum's
-own units, not the 0–1 range a DAW sees, and modules left at their defaults
-hold `plainParams: "default"` rather than a list of values. Which fields exist
-and what they mean is still being mapped; the format is reverse-engineered.
+(`Oscillator0`, `Env0`, `VoiceFilter0`, `ModSlot0`, …). Edited modules hold a
+`plainParams` map of parameter name to value; untouched ones hold an empty map.
+Values are not all the 0–1 range a DAW sees (envelope curves are stored as
+`50.0`, filter types as names like `"MgL6"`). Which fields exist and what they
+mean is still being mapped; the format is reverse-engineered.
 
-The `hash` in the header is recomputed on write. The CBOR is re-encoded
-byte-for-byte the way Serum writes it (32-bit floats where the value fits,
-64-bit otherwise), so an unedited preset round-trips to identical CBOR. The
-Zstd stream around it differs from Serum's, so files are not byte-identical
-overall.
+The header is the source of truth for metadata: keys it shares with the tree
+(`presetName`, `tags`, `presetAuthor`, …) are copied into the tree on write,
+and its `hash` is recomputed. The encoder keeps Serum's float widths (32-bit
+where the value fits, 64-bit otherwise) and its alphabetical key order, so the
+unedited test preset round-trips to identical CBOR. The Zstd stream around it
+differs from Serum's, so files are not byte-identical overall.
+
+**Not yet verified:** files written this way have not been loaded in Serum 2
+itself. Two open questions: whether Serum writes non-ASCII preset names as raw
+UTF-8 (this writes `\u` escapes), and whether it accepts an `int` where it
+wrote a float (write `1.0`, not `1`, when editing).
 
 ### Rendering an edited preset without writing a file
 

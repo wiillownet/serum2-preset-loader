@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import copy
+import os
 import hashlib
 import math
 import struct
@@ -125,18 +126,18 @@ def test_unedited_preset_roundtrips(preset_bytes):
     assert unwrap_xferjson(out)[2] == unwrap_xferjson(preset_bytes)[2]
 
 
-def test_header_key_order_and_format_match_serum(preset_bytes):
+def test_header_bytes_preserved_apart_from_hash(preset_bytes):
+    """The rewritten JSON header is Serum's, with only the hash value
+    replaced in place: same keys, order, number formats and position."""
     header, tree = decode_preset_bytes(preset_bytes)
-    n = struct.unpack("<Q", preset_bytes[9:17])[0]
-    original = preset_bytes[17:17 + n]
     out = encode_preset(header, tree)
-    m = struct.unpack("<Q", out[9:17])[0]
-    rewritten = out[17:17 + m]
-    # Identical apart from the 32 hex digits of the hash.
-    assert len(rewritten) == len(original)
-    strip = lambda b: b.replace(header["hash"].encode(), b"").replace(  # noqa: E731
-        decode_preset_bytes(out)[0]["hash"].encode(), b"")
-    assert strip(rewritten) == strip(original)
+
+    def raw_header(blob):
+        n = struct.unpack("<Q", blob[9:17])[0]
+        return blob[17:17 + n]
+    new_hash = decode_preset_bytes(out)[0]["hash"]
+    assert raw_header(out).replace(new_hash.encode(), header["hash"].encode()) == \
+        raw_header(preset_bytes)
 
 
 def test_hash_is_md5_of_compressed_payload(preset_bytes):
@@ -190,3 +191,171 @@ def test_written_preset_converts(preset_bytes):
     header, tree = decode_preset_bytes(preset_bytes)
     assert convert_preset_bytes(encode_preset(header, tree)) == \
         convert_preset_bytes(preset_bytes)
+
+
+# ─── gaps found by mutation testing in the audit ───────────────────────────
+
+def test_long_int_and_bool_lists_stay_ints():
+    """The fast path must only take lists of exact floats. [1]*100 == [1.0]*100
+    in Python, so compare bytes, not values."""
+    assert encode_cbor([1] * 100) == cbor2.dumps([1] * 100)
+    assert encode_cbor([True] * 100) == cbor2.dumps([True] * 100)
+
+
+def test_nan_is_written_as_32_bit():
+    assert encode_cbor(math.nan) == b"\xfa\x7f\xc0\x00\x00"
+
+
+def test_nan_with_64_bit_payload_stays_64_bit():
+    x = struct.unpack(">d", bytes.fromhex("7ff8000000000001"))[0]
+    enc = encode_cbor(x)
+    assert enc == b"\xfb" + bytes.fromhex("7ff8000000000001")
+
+
+@pytest.mark.parametrize("x", [2**64, -(2**64) - 1])
+def test_out_of_range_int_raises_with_original_value(x):
+    with pytest.raises(ValueError, match=str(x)):
+        encode_cbor(x)
+
+
+def test_bytearray_and_tuple_encode_like_bytes_and_list():
+    assert encode_cbor(bytearray(b"ab")) == encode_cbor(b"ab")
+    assert encode_cbor(("a", 1)) == encode_cbor(["a", 1])
+    assert encode_cbor(tuple([0.5] * 100)) == encode_cbor([0.5] * 100)
+
+
+def test_chunked_fast_path_matches_per_value_path():
+    xs = [i / 8 for i in range(10_000)]
+    xs[7000] = 0.1                       # one 64-bit value, mid-list
+    xs[5000] = math.nan                  # one NaN in another chunk
+    slow = b"".join(encode_cbor(x) for x in xs)
+    assert encode_cbor(xs) == b"\x99" + struct.pack(">H", len(xs)) + slow
+
+
+def test_sort_keys_orders_maps_alphabetically_at_every_level():
+    tree = {"b": {"z": 1, "a": 2}, "a": [{"y": 0, "x": 0}]}
+    assert cbor2.loads(encode_cbor(tree, sort_keys=True)) == tree
+    assert list(cbor2.loads(encode_cbor(tree, sort_keys=True))) == ["a", "b"]
+    assert encode_cbor(tree, sort_keys=True) == encode_cbor(
+        {"a": [{"x": 0, "y": 0}], "b": {"a": 2, "z": 1}})
+
+
+def test_added_parameter_lands_in_serum_key_order(preset_bytes):
+    header, tree = decode_preset_bytes(preset_bytes)
+    params = tree["VoiceFilter0"]["plainParams"]
+    params["kParamAaaa"] = 1.0           # inserted last, sorts first
+    out = decode_preset_bytes(encode_preset(header, tree))[1]
+    keys = list(out["VoiceFilter0"]["plainParams"])
+    assert keys == sorted(keys) and keys[0] == "kParamAaaa"
+
+
+def test_decode_respects_version_override(preset_bytes, monkeypatch):
+    from serum2_preset_loader import converter
+    raw = bytearray(preset_bytes)
+    n = struct.unpack("<Q", raw[9:17])[0]
+    raw[17 + n + 4:17 + n + 8] = struct.pack("<I", 3)
+    with pytest.raises(ValueError, match="version 3"):
+        decode_preset_bytes(bytes(raw))
+    monkeypatch.setattr(converter, "SUPPORTED_XFERJSON_VERSION", 3)
+    header, tree = decode_preset_bytes(bytes(raw))
+    out = encode_preset(header, tree)
+    assert struct.unpack("<I", out[17 + struct.unpack("<Q", out[9:17])[0] + 4:][:4])[0] == 3
+
+
+def test_header_metadata_is_copied_into_tree(preset_bytes):
+    """Renaming in the header alone used to leave the tree's own presetName
+    behind, so the file disagreed with itself."""
+    header, tree = decode_preset_bytes(preset_bytes)
+    header = {**header, "presetName": "renamed", "tags": ["Bass"]}
+    out_header, out_tree = decode_preset_bytes(encode_preset(header, tree))
+    assert out_header["presetName"] == out_tree["presetName"] == "renamed"
+    assert out_tree["tags"] == ["Bass"]
+    assert "hash" not in out_tree
+    assert tree["presetName"] == "test_preset"       # input not modified
+
+
+@pytest.mark.parametrize("header, tree", [([], {}), (None, {}), ({"fileType": "SerumPreset"}, [1])])
+def test_encode_preset_rejects_non_dicts(header, tree):
+    with pytest.raises(TypeError):
+        encode_preset(header, tree)
+
+
+def test_convert_tree_rejects_non_dict():
+    with pytest.raises(TypeError):
+        convert_preset_tree([1])
+
+
+def test_nan_in_header_is_rejected(preset_bytes):
+    header, tree = decode_preset_bytes(preset_bytes)
+    with pytest.raises(ValueError):
+        encode_preset({**header, "x": math.nan}, tree)
+
+
+def test_failed_write_leaves_existing_file_untouched(preset_bytes, tmp_path):
+    path = tmp_path / "keep.SerumPreset"
+    path.write_bytes(b"ORIGINAL")
+    header, tree = decode_preset_bytes(preset_bytes)
+    with pytest.raises(TypeError):
+        write_preset_file(path, header, {**tree, "bad": {1, 2}})
+    assert path.read_bytes() == b"ORIGINAL"
+    assert list(tmp_path.iterdir()) == [path]          # no temp file left
+
+
+def test_decode_rejects_shared_references():
+    import zstandard
+    from serum2_preset_loader.wrappers import wrap_xferjson_precompressed
+    cycle = b"\xd8\x1c\xa1\x61k\xd8\x1d\x00"
+    blob = wrap_xferjson_precompressed(
+        {"fileType": "SerumPreset"}, zstandard.ZstdCompressor().compress(cycle),
+        uncompressed_size=len(cycle))
+    with pytest.raises(ValueError, match="shared"):
+        decode_preset_bytes(blob)
+
+
+def test_bytes_path_frees_decoded_tree_before_compression(preset_bytes, monkeypatch):
+    """Guards decisions.md's peak-memory rule: convert_preset_bytes must not
+    keep its own reference to the decoded tree while compressing."""
+    import weakref
+    import zstandard
+    from serum2_preset_loader import converter
+
+    class Tree(dict):
+        pass
+
+    seen = {}
+    real_loads, real_compressor = converter._loads_cbor_tree, zstandard.ZstdCompressor
+
+    def tracked_loads(cbor):
+        tree = Tree(real_loads(cbor))
+        seen["ref"] = weakref.ref(tree)
+        return tree
+
+    class Compressor:
+        def compress(self, data):
+            seen["alive_at_compress"] = seen["ref"]() is not None
+            return real_compressor().compress(data)
+
+    monkeypatch.setattr(converter, "_loads_cbor_tree", tracked_loads)
+    monkeypatch.setattr(converter.zstandard, "ZstdCompressor", Compressor)
+    convert_preset_bytes(preset_bytes)
+    assert seen["alive_at_compress"] is False
+
+
+def test_readme_examples_run(tmp_path):
+    """The README's two code examples, run against the fixture."""
+    import re
+    readme = (Path(__file__).parent.parent / "README.md").read_text()
+    section = readme[readme.index("## Reading and writing presets"):readme.index("## Targeting a different Serum build")]
+    blocks = re.findall(r"```python\n(.*?)```", section, re.S)
+    assert len(blocks) == 2
+    src = FIXTURE.read_bytes()
+    (tmp_path / "My Preset.SerumPreset").write_bytes(src)
+    cwd = os.getcwd()
+    os.chdir(tmp_path)
+    try:
+        for code in blocks:
+            exec(compile(code, "README", "exec"), {})
+    finally:
+        os.chdir(cwd)
+    h, t = decode_preset_file(tmp_path / "My Preset (darker).SerumPreset")
+    assert h["presetName"] == t["presetName"] == "My Preset (darker)"

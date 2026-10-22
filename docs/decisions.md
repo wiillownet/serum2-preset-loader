@@ -51,11 +51,11 @@
 
 **Alternatives considered:** A separate codec package, cleaner in name but two packages tracking one undocumented format. KennethWussmann's serum-preset-packager, which works through JSON and leaves the same field meanings unknown.
 
-## [2026-10-22] Encode CBOR with Serum's float widths; leave the converter on cbor2
+## [2026-10-22] Encode CBOR with Serum's float widths and key order; leave the converter on cbor2
 
-**Decision:** `encode_cbor` writes each float as 32-bit when it round-trips exactly and 64-bit otherwise, which reproduces Serum's CBOR byte-for-byte on the test preset. Preset writing uses it. `convert_preset_*` keeps using `cbor2.dumps` (all 64-bit).
+**Decision:** `encode_cbor` writes each float as 32-bit when it round-trips exactly and 64-bit otherwise (never 16-bit, which Serum doesn't use even for 0.0 or 0.5), and `encode_preset` sorts map and header keys alphabetically, as every map in the test preset is. Together they reproduce the test preset's CBOR byte-for-byte. `convert_preset_*` keeps using `cbor2.dumps` (finite floats as 64-bit).
 
-**Reason:** cbor2 always writes 64-bit floats, changing every float in a written preset (7823 → 8151 bytes on the fixture). Serum's `setState` already accepts the converter's 64-bit output, and switching would change converted bytes that serum-render users may have pinned against, for no gain.
+**Reason:** cbor2 writes finite floats as 64-bit by default, changing every float in a written preset (7823 → 8151 bytes on the fixture), and insertion order would put a newly added parameter where Serum wouldn't. Serum's `setState` already accepts the converter's 64-bit output, and switching would change converted bytes that serum-render users may have pinned against, for no gain.
 
 **Alternatives considered:** Using `encode_cbor` in the converter too. Revisit if Serum ever rejects 64-bit floats in state.
 

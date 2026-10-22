@@ -2,30 +2,42 @@
 
 ``decode_preset_*`` returns the JSON header and the decoded CBOR tree;
 ``encode_preset`` / ``write_preset_file`` go the other way. The tree is the
-preset-file shape (``plainParams: "default"`` for untouched modules, UI and
-library fields present) — the same input :func:`preset_cbor_to_processor_cbor`
-takes, so an edited tree can be converted and loaded without touching disk.
+preset-file shape (UI and library fields present; untouched modules hold an
+empty ``plainParams`` map, and the converter also accepts the string
+``"default"`` there) — the same input :func:`convert_preset_tree` takes, so an
+edited tree can be converted and loaded without touching disk.
 
-Serum writes each float in the narrowest CBOR width that holds it exactly:
-32-bit where the value round-trips through float32, 64-bit otherwise.
-``cbor2.dumps`` always writes 64-bit, which changes every float in the file
-(the test preset grows from 7823 to 8151 bytes). :func:`encode_cbor` keeps
-Serum's widths, so decode → encode of an unedited preset reproduces its CBOR
-byte for byte.
+What the encoder reproduces, as observed in the Serum 2.1.4 test preset:
+
+- **Float widths.** Serum writes a float as 32-bit when the value round-trips
+  through float32 and 64-bit otherwise, never 16-bit. ``cbor2.dumps`` writes
+  finite floats as 64-bit by default, which changes every float in the file
+  (the test preset grows from 7823 to 8151 bytes).
+- **Key order.** Every map in the file, and the JSON header, is in
+  lexicographic key order. :func:`encode_preset` sorts keys the same way, so
+  a parameter added to an edited tree lands where Serum would put it.
+
+With both, the unedited test preset re-encodes to identical CBOR. Files
+written this way have not yet been loaded in Serum 2 itself.
 """
 from __future__ import annotations
 
 import hashlib
+import os
 import struct
-from pathlib import Path
-from typing import Any
+from typing import Any, Union
 
-import cbor2
 import zstandard
 
-from .wrappers import unwrap_xferjson, wrap_xferjson_precompressed
+from . import converter
+from .wrappers import _loads_cbor_tree, unwrap_xferjson, wrap_xferjson_precompressed
 
-PRESET_FORMAT_VERSION = 2  # XferJson envelope version for .SerumPreset files
+PathLike = Union[str, "os.PathLike[str]"]
+
+# Long all-float lists are encoded in chunks of this many values: a single
+# value that needs 64 bits then only sends its own chunk down the slow path.
+_FAST_PATH_MIN = 64
+_FAST_PATH_CHUNK = 4096
 
 
 # ─── CBOR encoding with Serum's float widths ───────────────────────────────
@@ -39,9 +51,13 @@ def _head(major: int, n: int) -> bytes:
         return bytes((major << 5 | 25,)) + struct.pack(">H", n)
     if n < 0x100000000:
         return bytes((major << 5 | 26,)) + struct.pack(">I", n)
-    if n < 0x10000000000000000:
-        return bytes((major << 5 | 27,)) + struct.pack(">Q", n)
-    raise ValueError(f"integer {n} does not fit in CBOR's 64-bit argument")
+    return bytes((major << 5 | 27,)) + struct.pack(">Q", n)
+
+
+def _int(x: int) -> bytes:
+    if not -(2**64) <= x < 2**64:
+        raise ValueError(f"integer {x} does not fit in CBOR's 64-bit argument")
+    return _head(0, x) if x >= 0 else _head(1, -1 - x)
 
 
 def _float(x: float) -> bytes:
@@ -49,27 +65,26 @@ def _float(x: float) -> bytes:
         f32 = struct.pack(">f", x)
     except OverflowError:          # beyond float32's range
         return b"\xfb" + struct.pack(">d", x)
-    # NaN != NaN, so compare bit patterns via a second pack.
+    # Compare bit patterns, not values: NaN != NaN, and a NaN whose payload
+    # float32 can't hold must stay 64-bit.
     if struct.pack(">d", struct.unpack(">f", f32)[0]) == struct.pack(">d", x):
         return b"\xfa" + f32
     return b"\xfb" + struct.pack(">d", x)
 
 
-def _float_list(xs: list) -> bytes | None:
-    """Fast path for long all-float lists (wavetable and sample data).
-
-    A sample-based preset carries tens of millions of floats; encoding them
-    one ``_float`` call at a time takes minutes. Packing the whole list as
-    float32 and back runs in C. Returns ``None`` when some value needs 64 bits,
-    so the caller falls back to the per-element path.
-    """
+def _float_chunk(xs: list) -> bytes:
+    """Encode a list of floats; packs the whole chunk as float32 in C when
+    every value round-trips, which is what makes sample data fast."""
     n = len(xs)
     try:
         f32 = struct.pack(f">{n}f", *xs)
-    except OverflowError:          # a value beyond float32's range
-        return None
+    except OverflowError:
+        return b"".join(map(_float, xs))
+    # == treats NaN as unequal, so a chunk holding one takes the per-value
+    # path (which keeps its payload exact); ±0 compare equal but pack keeps
+    # the sign.
     if list(struct.unpack(f">{n}f", f32)) != xs:
-        return None
+        return b"".join(map(_float, xs))
     out = bytearray(5 * n)
     out[0::5] = b"\xfa" * n
     for i in range(4):
@@ -77,7 +92,13 @@ def _float_list(xs: list) -> bytes | None:
     return bytes(out)
 
 
-def _encode(x: Any, out: list) -> None:
+def _map_items(x: dict, sort_keys: bool):
+    if sort_keys and all(type(k) is str for k in x):
+        return sorted(x.items())
+    return x.items()
+
+
+def _encode(x: Any, out: list, sort_keys: bool) -> None:
     # bool before int: bool is a subclass of int.
     if x is True:
         out.append(b"\xf5")
@@ -86,7 +107,7 @@ def _encode(x: Any, out: list) -> None:
     elif x is None:
         out.append(b"\xf6")
     elif isinstance(x, int):
-        out.append(_head(0, x) if x >= 0 else _head(1, -1 - x))
+        out.append(_int(x))
     elif isinstance(x, float):
         out.append(_float(x))
     elif isinstance(x, str):
@@ -96,35 +117,40 @@ def _encode(x: Any, out: list) -> None:
     elif isinstance(x, (bytes, bytearray)):
         out.append(_head(2, len(x)))
         out.append(bytes(x))
-    elif isinstance(x, list):
+    elif isinstance(x, (list, tuple)):
         out.append(_head(4, len(x)))
-        fast = None
-        if len(x) >= 64 and set(map(type, x)) == {float}:
-            fast = _float_list(x)
-        if fast is not None:
-            out.append(fast)
+        # Exact type check: bool/int must not take the float path, and float
+        # subclasses (numpy.float64) take the per-value path, which handles
+        # them correctly.
+        if len(x) >= _FAST_PATH_MIN and set(map(type, x)) == {float}:
+            xs = list(x)
+            for s in range(0, len(xs), _FAST_PATH_CHUNK):
+                out.append(_float_chunk(xs[s:s + _FAST_PATH_CHUNK]))
         else:
             for v in x:
-                _encode(v, out)
+                _encode(v, out, sort_keys)
     elif isinstance(x, dict):
         out.append(_head(5, len(x)))
-        for k, v in x.items():
-            _encode(k, out)
-            _encode(v, out)
+        for k, v in _map_items(x, sort_keys):
+            _encode(k, out, sort_keys)
+            _encode(v, out, sort_keys)
     else:
         raise TypeError(
             f"cannot encode {type(x).__name__} in a Serum preset "
-            "(expected dict, list, str, bytes, int, float, bool or None)"
+            "(expected dict, list, tuple, str, bytes, int, float, bool or None)"
         )
 
 
-def encode_cbor(obj: Any) -> bytes:
-    """Encode ``obj`` to CBOR the way Serum 2 does (see module docstring).
+def encode_cbor(obj: Any, *, sort_keys: bool = False) -> bytes:
+    """Encode ``obj`` to CBOR with Serum 2's float widths (see module docstring).
 
-    Key order is preserved as given; Serum's files are not canonically sorted.
+    Maps keep the given key order unless ``sort_keys`` is true, which sorts
+    any map whose keys are all strings in lexicographic order, as Serum's
+    files are. Tuples encode as arrays. Raises ``TypeError`` for other types
+    and ``ValueError`` for integers outside CBOR's 64-bit range.
     """
     out: list[bytes] = []
-    _encode(obj, out)
+    _encode(obj, out, sort_keys)
     return b"".join(out)
 
 
@@ -133,50 +159,92 @@ def encode_cbor(obj: Any) -> bytes:
 def decode_preset_bytes(preset_bytes: bytes) -> tuple[dict, dict]:
     """Return ``(header, tree)`` for raw ``.SerumPreset`` bytes.
 
-    Raises ``ValueError`` if the bytes are not a ``.SerumPreset`` (a captured
-    processor state uses the same envelope but a different ``fileType``).
+    Raises ``ValueError`` for anything that is not a well-formed
+    ``.SerumPreset``, including a captured processor state (same envelope,
+    different ``fileType``). The accepted envelope version is
+    ``converter.SUPPORTED_XFERJSON_VERSION``, read at call time, so the
+    override in the README applies here too.
     """
-    from .converter import _validate_preset_filetype
-
     header, _version, cbor = unwrap_xferjson(
-        preset_bytes, expected_version=PRESET_FORMAT_VERSION
+        preset_bytes, expected_version=converter.SUPPORTED_XFERJSON_VERSION
     )
-    _validate_preset_filetype(header)
-    return header, cbor2.loads(cbor)
+    converter._validate_preset_filetype(header)
+    return header, _loads_cbor_tree(cbor)
 
 
-def decode_preset_file(path: str | Path) -> tuple[dict, dict]:
+def decode_preset_file(path: PathLike) -> tuple[dict, dict]:
     """Read a ``.SerumPreset`` from disk and return ``(header, tree)``."""
-    return decode_preset_bytes(Path(path).read_bytes())
+    with open(path, "rb") as f:
+        return decode_preset_bytes(f.read())
+
+
+# Header keys whose values the tree repeats at its top level. The header is
+# what Serum's browser and read_preset_metadata see; encode_preset copies these
+# into the tree so editing one place can't leave the file disagreeing with
+# itself.
+_HEADER_ONLY_KEYS = frozenset({"hash"})
 
 
 def encode_preset(header: dict, tree: dict) -> bytes:
     """Build ``.SerumPreset`` bytes from a header and a preset-shaped tree.
 
     ``header`` is typically the one :func:`decode_preset_bytes` returned, with
-    any edits (``presetName``, ``tags`` …). Its ``hash`` is recomputed: it is
-    the MD5 of the compressed CBOR payload, verified against Serum 2.1.4
-    files. Other keys are written as given, in the given order.
+    any edits (``presetName``, ``tags`` …). The header is the source of truth
+    for metadata: any key it shares with the tree's top level (``presetName``,
+    ``tags``, ``presetAuthor`` …) is written into the tree too. Neither
+    argument is modified.
 
-    The CBOR is byte-identical to what Serum would write for the same tree;
-    the Zstd stream is not (Serum's compressor settings are unknown), which
-    is why the hash has to be recomputed rather than carried over.
+    ``hash`` is recomputed as the MD5 of the compressed CBOR, the rule
+    observed in the Serum 2.1.4 test preset; whether Serum checks it on load
+    is untested. The Zstd stream differs from Serum's (its compressor
+    settings are unknown), so the file as a whole is not byte-identical.
+
+    Raises ``TypeError`` if ``header`` or ``tree`` is not a dict or holds a
+    value that can't be encoded, and ``ValueError`` if ``fileType`` is not
+    ``"SerumPreset"`` or the header holds NaN or infinity.
     """
+    if not isinstance(header, dict):
+        raise TypeError(f"header must be a dict, got {type(header).__name__}")
+    if not isinstance(tree, dict):
+        raise TypeError(f"tree must be a dict, got {type(tree).__name__}")
     if header.get("fileType") != "SerumPreset":
         raise ValueError(
             f"header fileType must be 'SerumPreset', got {header.get('fileType')!r}"
         )
-    cbor = encode_cbor(tree)
+    shared = {k: v for k, v in header.items()
+              if k in tree and k not in _HEADER_ONLY_KEYS}
+    if shared:
+        tree = {**tree, **shared}
+    cbor = encode_cbor(tree, sort_keys=True)
     compressed = zstandard.ZstdCompressor().compress(cbor)
     header = dict(header)
     header["hash"] = hashlib.md5(compressed, usedforsecurity=False).hexdigest()
+    if all(type(k) is str for k in header):
+        header = dict(sorted(header.items()))   # Serum's header is sorted too
     return wrap_xferjson_precompressed(
         header, compressed,
         uncompressed_size=len(cbor),
-        version=PRESET_FORMAT_VERSION,
+        version=converter.SUPPORTED_XFERJSON_VERSION,
     )
 
 
-def write_preset_file(path: str | Path, header: dict, tree: dict) -> None:
-    """Write a ``.SerumPreset`` to disk (see :func:`encode_preset`)."""
-    Path(path).write_bytes(encode_preset(header, tree))
+def write_preset_file(path: PathLike, header: dict, tree: dict) -> None:
+    """Write a ``.SerumPreset`` to disk (see :func:`encode_preset`).
+
+    The file is encoded in full first, then written to a temporary file in the
+    same folder and moved into place, so a failure never leaves a partial
+    preset at ``path``.
+    """
+    data = encode_preset(header, tree)
+    path = os.fspath(path)
+    tmp = f"{path}.tmp-{os.getpid()}"
+    try:
+        with open(tmp, "wb") as f:
+            f.write(data)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise

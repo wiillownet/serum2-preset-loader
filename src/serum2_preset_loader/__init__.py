@@ -6,7 +6,6 @@ and encodes the preset files themselves.
 from importlib.metadata import PackageNotFoundError, version as _pkg_version
 
 from .codec import (
-    PRESET_FORMAT_VERSION,
     decode_preset_bytes,
     decode_preset_file,
     encode_cbor,
@@ -42,7 +41,6 @@ __all__ = [
     "encode_preset",
     "write_preset_file",
     "encode_cbor",
-    "PRESET_FORMAT_VERSION",
     "convert_preset_bytes",
     "convert_preset_file",
     "convert_preset_tree",
