@@ -27,3 +27,11 @@
 
 **Alternatives considered:** Streaming decompression with a read cap (`stream_reader`), which bounds memory without trusting the frame but copies the output once more; checking the declared size first gets the same bound with the existing single allocation. Rejecting tags 28/29 at decode via `semantic_decoders`, which cbor2 5.x (still allowed by the `>=5.4` floor) does not support; a post-decode identity walk works on every version.
 
+## [2026-10-23] Count CBOR containers before decoding; require string keys
+
+**Decision:** Before `cbor2.loads`, a linear scan of CBOR item heads counts maps and arrays and rejects more than 1M, skipping runs of same-width floats in one step and stopping after 10M steps. After decoding, every map must have string keys. Any exception from `cbor2.loads` becomes `ValueError`.
+
+**Reason:** The second audit found that a 201-byte file of 4M empty lists decoded to 566 MiB in 8.7 s (589 bytes reached ~2.2 GiB), all under the size caps. It also found that non-string map keys reached the converter and raised `AttributeError`, and that cbor2 5.4, still allowed by the dependency floor, raises `TypeError` and `MemoryError` on malformed input. The scan takes 0.13 s on 41M float32 values; its worst case (alternating float widths, single-byte items) stops at the step cap in about 3 s.
+
+**Alternatives considered:** Skipping empty containers in the shared-reference walk, which makes the walk cheaper but leaves the decode itself unbounded. Counting during decoding, which cbor2's C decoder has no hook for (`object_hook` sees maps only). Documenting a per-worker memory limit instead; the README now recommends one as well, for honest files near the 1 GiB cap, which no count limits.
+

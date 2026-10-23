@@ -142,3 +142,131 @@ def test_read_metadata_with_huge_declared_length_is_a_value_error(tmp_path, json
 
 def test_read_metadata_still_reads_fixture():
     assert read_preset_metadata(str(FIXTURE))["presetName"] == "test_preset"
+
+
+# ─── round 2: map keys, cbor2 version quirks, container count ──────────────
+
+@pytest.mark.parametrize("cbor", [
+    bytes.fromhex("a1820102a0"),        # {[1, 2]: {}} -> tuple key
+    bytes.fromhex("a100a0"),            # {0: {}}      -> int key
+    bytes.fromhex("a1a0a0"),            # {{}: {}}     -> frozendict key
+    bytes.fromhex("a1616ba1f5a0"),      # nested map with a bool key
+])
+def test_non_string_map_keys_are_a_value_error(cbor):
+    """These used to reach the converter and raise AttributeError from
+    key.startswith(...)."""
+    with pytest.raises(ValueError, match="non-string map key|corrupt"):
+        convert_preset_bytes(envelope(cbor))
+
+
+@pytest.mark.parametrize("exc", [TypeError("unhashable"), MemoryError(), OverflowError()])
+def test_any_cbor2_failure_becomes_value_error(monkeypatch, exc):
+    """cbor2 5.4 raises TypeError for unhashable keys and MemoryError for a
+    huge declared string length; neither is a ValueError."""
+    def boom(_):
+        raise exc
+    monkeypatch.setattr(wrappers.cbor2, "loads", boom)
+    with pytest.raises(ValueError, match=type(exc).__name__):
+        _loads_cbor_tree(b"\xa0")
+
+
+def test_huge_declared_string_length_is_rejected_before_decoding():
+    cbor = b"\xa1\x61a\x5b" + (2**40).to_bytes(8, "big")
+    with pytest.raises(ValueError, match="string length"):
+        convert_preset_bytes(envelope(cbor))
+
+
+def test_many_tiny_containers_are_rejected_before_decoding(monkeypatch):
+    """4M empty lists: 201 bytes compressed, 566 MiB and 8.7 s decoded."""
+    def must_not_decode(_):
+        raise AssertionError("cbor2.loads reached despite the container cap")
+    monkeypatch.setattr(wrappers.cbor2, "loads", must_not_decode)
+    n = 4_000_000
+    cbor = b"\xa1\x61x\x9a" + n.to_bytes(4, "big") + b"\x80" * n
+    with pytest.raises(ValueError, match="more than 1000000 maps and arrays"):
+        convert_preset_bytes(envelope(cbor))
+
+
+def test_container_cap_boundary(monkeypatch):
+    cbor = b"\xa1\x61x\x83\x80\xa0\x80"     # {'x': [[], {}, []]}: 5 containers
+    monkeypatch.setattr(wrappers, "_MAX_CBOR_CONTAINERS", 5)
+    _loads_cbor_tree(cbor)
+    monkeypatch.setattr(wrappers, "_MAX_CBOR_CONTAINERS", 4)
+    with pytest.raises(ValueError, match="more than 4 maps"):
+        _loads_cbor_tree(cbor)
+
+
+def test_indefinite_length_containers_are_counted(monkeypatch):
+    cbor = b"\xbf\x61a\x9f\x01\xff\xff"     # {_ 'a': [_ 1]}
+    monkeypatch.setattr(wrappers, "_MAX_CBOR_CONTAINERS", 1)
+    with pytest.raises(ValueError, match="more than 1 maps"):
+        _loads_cbor_tree(cbor)
+
+
+def test_scan_step_cap(monkeypatch):
+    monkeypatch.setattr(wrappers, "_MAX_CBOR_SCAN_STEPS", 100)
+    alternating = b"\xfa\x3f\x00\x00\x00\xfb" + struct.pack(">d", 0.1)
+    cbor = b"\xa1\x61x\x98\xc8" + alternating * 100
+    with pytest.raises(ValueError, match="too many items to scan"):
+        _loads_cbor_tree(cbor)
+
+
+def test_float_runs_cost_one_scan_step_each(monkeypatch):
+    """Sample data must not hit the step cap: 100k float32 values is one run
+    per 4096 values (25 steps), plus a few for the map and key."""
+    monkeypatch.setattr(wrappers, "_MAX_CBOR_SCAN_STEPS", 40)
+    n = 100_000
+    cbor = b"\xa1\x61x\x9a" + n.to_bytes(4, "big") + b"\xfa\x3f\x00\x00\x00" * n
+    assert len(_loads_cbor_tree(cbor)["x"]) == n
+
+
+def test_truncated_float_run_is_a_value_error():
+    cbor = b"\xa1\x61x\x83" + b"\xfa\x3f\x00\x00\x00" * 2 + b"\xfa\x3f\x00"
+    with pytest.raises(ValueError, match="truncated float"):
+        wrappers._check_cbor_container_count(cbor)   # the scan itself, not cbor2
+
+
+def test_scanner_accepts_every_valid_encoding():
+    """The pre-scan must never reject CBOR that cbor2 itself decodes."""
+    import math
+    import random
+
+    import cbor2
+
+    rng = random.Random(1)
+    scalars = [0, 23, 24, 256, 2**40, -1, -(2**40), 0.5, 0.1, math.inf, math.nan,
+               -0.0, "", "ab" * 20, b"x" * 300, True, False, None, 1e300]
+
+    def rnd(depth=0):
+        r = rng.random()
+        if depth > 3 or r < 0.4:
+            return rng.choice(scalars)
+        if r < 0.7:
+            return [rnd(depth + 1) for _ in range(rng.randint(0, 8))]
+        return {str(i): rnd(depth + 1) for i in range(rng.randint(0, 8))}
+
+    for _ in range(500):
+        tree = {"k": rnd()}
+        for cbor in (cbor2.dumps(tree), cbor2.dumps(tree, canonical=True)):
+            _loads_cbor_tree(cbor)
+
+
+def test_fuzzed_fixture_only_raises_value_error():
+    """Seeded bit flips and truncations of the real preset: every failure is
+    a ValueError. (A 3000-iteration run in the audit found AttributeError,
+    TypeError and MemoryError before these fixes.)"""
+    import random
+
+    rng = random.Random(7)
+    good = FIXTURE.read_bytes()
+    for _ in range(600):
+        b = bytearray(good)
+        if rng.random() < 0.2:
+            b = b[:rng.randrange(len(b))]
+        else:
+            for _ in range(rng.randint(1, 8)):
+                b[rng.randrange(len(b))] ^= 1 << rng.randrange(8)
+        try:
+            convert_preset_bytes(bytes(b))
+        except ValueError:
+            pass
