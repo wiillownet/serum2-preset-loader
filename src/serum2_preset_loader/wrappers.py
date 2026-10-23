@@ -6,6 +6,7 @@ import base64
 import json
 import struct
 
+import cbor2
 import zstandard
 
 
@@ -23,6 +24,29 @@ import zstandard
 
 XFER_MAGIC = b"XferJson\x00"
 
+# Upper bounds on sizes an untrusted file can make us allocate. Every size in
+# the envelope is attacker-controlled, so these are checked before any read or
+# decompression. Real values are far below both: headers are a few hundred
+# bytes, and the largest sample-based presets seen decompress to a few
+# hundred MB.
+_MAX_HEADER_JSON_SIZE = 16 << 20       # 16 MiB
+_MAX_CBOR_SIZE = 1 << 30               # 1 GiB
+# Maps and arrays in one payload. Each costs ~70 bytes once decoded but can
+# be 1 byte of CBOR: 4M empty lists, a 201-byte file, decoded to ~300 MiB,
+# and converting it took ~570 MiB and ~9 s with the tree checks. The test
+# preset holds 425 (403 maps, 22 arrays); sample data lives in a few long
+# lists, so real presets sit far below this.
+_MAX_CBOR_CONTAINERS = 1_000_000
+# Nesting depth after decoding. The test preset nests 4 deep. cbor2 6 stops
+# at 400, but cbor2 5 doesn't limit it, and the converter's recursive copy
+# then raised RecursionError at ~500 levels on Python 3.9.
+_MAX_CBOR_DEPTH = 64
+# Loop iterations the pre-scan may spend. Runs of same-width floats cost one
+# iteration each, so real presets take a few thousand; only adversarial
+# input (e.g. alternating float widths) gets near this, and it bounds the
+# scan to a few seconds.
+_MAX_CBOR_SCAN_STEPS = 10_000_000
+
 
 def _parse_header(blob: bytes) -> tuple[dict, int]:
     """Return (metadata_dict, offset_of_cbor_header). Validates magic and JSON only."""
@@ -31,14 +55,31 @@ def _parse_header(blob: bytes) -> tuple[dict, int]:
     if bytes(blob[:9]) != XFER_MAGIC:
         raise ValueError(f"not an XferJson blob: magic={bytes(blob[:9])!r}")
     json_len = struct.unpack("<Q", blob[9:17])[0]
+    _check_header_len(json_len)
     if len(blob) < 17 + json_len + 8:
         raise ValueError("XferJson blob truncated before CBOR header")
-    meta = json.loads(bytes(blob[17:17 + json_len]))
+    meta = _loads_header_json(bytes(blob[17:17 + json_len]))
     if not isinstance(meta, dict):
         raise ValueError(
             f"XferJson metadata must be a JSON object, got {type(meta).__name__}"
         )
     return meta, 17 + json_len
+
+
+def _check_header_len(json_len: int) -> None:
+    if json_len > _MAX_HEADER_JSON_SIZE:
+        raise ValueError(
+            f"XferJson metadata length {json_len} exceeds the "
+            f"{_MAX_HEADER_JSON_SIZE}-byte limit (corrupt or not a Serum file)"
+        )
+
+
+def _loads_header_json(raw: bytes):
+    try:
+        return json.loads(raw)
+    except RecursionError as e:  # pathologically nested JSON
+        raise ValueError("XferJson metadata is nested too deeply") from e
+    # JSONDecodeError and UnicodeDecodeError are already ValueErrors.
 
 
 def unwrap_xferjson(
@@ -59,13 +100,27 @@ def unwrap_xferjson(
         raise ValueError(
             f"unsupported XferJson format version {version}; expected {expected_version}"
         )
+    if uncompressed_size > _MAX_CBOR_SIZE:
+        raise ValueError(
+            f"XferJson CBOR size {uncompressed_size} exceeds the "
+            f"{_MAX_CBOR_SIZE}-byte limit"
+        )
+    payload = after[8:]
     try:
-        # The header's own size is the output bound. A frame that carries its
-        # content size (Serum's always do) ignores max_output_size anyway;
-        # one that does not is capped at what the header claims and then
-        # checked below.
+        # decompress() allocates whatever size the frame itself declares and
+        # ignores max_output_size when one is present (Serum's frames always
+        # carry one), so a 13 KB file declaring 400 MiB used to allocate
+        # 400 MiB before the size check below rejected it. Check the
+        # declaration first. A frame without one is bounded by
+        # max_output_size, i.e. by the header size checked above.
+        declared = zstandard.frame_content_size(payload)
+        if declared != -1 and declared != uncompressed_size:
+            raise ValueError(
+                f"XferJson CBOR size mismatch: header={uncompressed_size}, "
+                f"zstd frame declares {declared}"
+            )
         cbor = zstandard.ZstdDecompressor().decompress(
-            after[8:], max_output_size=uncompressed_size
+            payload, max_output_size=uncompressed_size
         )
     except zstandard.ZstdError as e:
         raise ValueError(f"XferJson zstd payload corrupt: {e}") from e
@@ -74,6 +129,156 @@ def unwrap_xferjson(
             f"XferJson CBOR size mismatch: header={uncompressed_size}, decompressed={len(cbor)}"
         )
     return meta, version, cbor
+
+
+_CBOR_CONTAINERS = (dict, list)
+# Every value in a Serum preset is one of these. cbor2 can also return tagged
+# values (datetime, Decimal, CBORTag, ...), `undefined`, simple values, and on
+# cbor2 5 a stray "break" byte as a `break_marker` object; none survive
+# conversion (cbor2.dumps rejects some, raising a non-ValueError), and Serum
+# writes none of them.
+_CBOR_SCALARS = frozenset({str, int, float, bool, type(None), bytes})
+_CBOR_VALUE_TYPES = _CBOR_SCALARS | {dict, list}
+
+
+def _loads_cbor_tree(cbor_bytes: bytes) -> dict:
+    """Decode a Serum CBOR payload, raising ``ValueError`` on anything corrupt.
+
+    Every failure an untrusted file can cause surfaces as ``ValueError``:
+    cbor2's own errors are not ``ValueError`` subclasses, and depending on the
+    cbor2 version malformed input can also raise ``TypeError`` (unhashable
+    map keys), ``MemoryError`` (a huge declared string length) or
+    ``RecursionError``. Before decoding, the payload's maps and arrays are
+    counted (see ``_MAX_CBOR_CONTAINERS``). After decoding, the tree must be a
+    map no deeper than ``_MAX_CBOR_DEPTH``, whose maps all have string keys
+    and whose values are all plain types, with no container appearing twice:
+    cbor2 decodes CBOR shared references (tags 28/29) into aliased objects,
+    which lets a few hundred bytes describe a cyclic tree or one with 2**40
+    nodes. Serum writes none of these.
+    """
+    _check_cbor_container_count(cbor_bytes)
+    try:
+        tree = cbor2.loads(cbor_bytes)
+    except Exception as e:  # noqa: BLE001 - see docstring; all become ValueError
+        raise ValueError(f"CBOR payload corrupt: {type(e).__name__}: {e}") from e
+    if not isinstance(tree, dict):
+        raise ValueError(
+            f"CBOR payload must be a map, got {type(tree).__name__}"
+        )
+    _check_tree(tree)
+    return tree
+
+
+def _cbor_corrupt(why: str) -> ValueError:
+    return ValueError(f"CBOR payload corrupt: {why}")
+
+
+_FLOAT_HEADS = {0xFA: b"\xfa", 0xFB: b"\xfb"}
+
+
+def _check_cbor_container_count(cbor: bytes) -> None:
+    """Count maps and arrays by walking CBOR item heads, without decoding.
+
+    CBOR is a flat sequence of item heads (children follow their container
+    inline), so a linear walk sees every item. A run of 32- or 64-bit floats
+    is skipped in one step: if the item at ``p`` is ``0xfa`` (5 bytes), the
+    next starts at ``p+5``, so the run's length is the number of leading
+    ``0xfa`` bytes in ``cbor[p::5]``.
+    """
+    data = cbor if isinstance(cbor, (bytes, bytearray)) else bytes(cbor)
+    n = len(data)
+    p = 0
+    containers = 0
+    steps = 0
+    while p < n:
+        steps += 1
+        if steps > _MAX_CBOR_SCAN_STEPS:
+            raise ValueError(
+                f"CBOR payload has too many items to scan (more than "
+                f"{_MAX_CBOR_SCAN_STEPS} outside float runs)"
+            )
+        ib = data[p]
+        if ib == 0xFA or ib == 0xFB:
+            stride = 5 if ib == 0xFA else 9
+            if p + stride < n and data[p + stride] == ib:
+                window = data[p:p + stride * 4096:stride]
+                run = len(window) - len(window.lstrip(_FLOAT_HEADS[ib]))
+            else:
+                run = 1
+            # The last item of the run may be cut off by the end of input.
+            if p + run * stride > n:
+                raise _cbor_corrupt("truncated float")
+            p += run * stride
+            continue
+        major, ai = ib >> 5, ib & 0x1F
+        p += 1
+        if ai < 24:
+            arg = ai
+        elif ai <= 27:
+            size = 1 << (ai - 24)
+            if p + size > n:
+                raise _cbor_corrupt("truncated item head")
+            arg = int.from_bytes(data[p:p + size], "big")
+            p += size
+        elif ai == 31:
+            if major in (0, 1, 6):
+                raise _cbor_corrupt(f"indefinite length on major type {major}")
+            if major in (4, 5):
+                containers += 1
+            continue  # indefinite string/container or a 0xff break
+        else:
+            raise _cbor_corrupt(f"reserved additional info {ai}")
+        if major in (2, 3):
+            if arg > n - p:
+                raise _cbor_corrupt(f"string length {arg} exceeds payload")
+            p += arg
+        elif major in (4, 5):
+            containers += 1
+        if containers > _MAX_CBOR_CONTAINERS:
+            raise ValueError(
+                f"CBOR payload holds more than {_MAX_CBOR_CONTAINERS} maps and "
+                "arrays (corrupt or not a Serum preset)"
+            )
+
+
+def _check_tree(tree: dict) -> None:
+    seen: set[int] = set()
+    stack: list = [(tree, 1)]
+    while stack:
+        node, depth = stack.pop()
+        if depth > _MAX_CBOR_DEPTH:
+            raise ValueError(
+                f"CBOR payload nests deeper than {_MAX_CBOR_DEPTH} levels "
+                "(corrupt or not a Serum preset)"
+            )
+        if id(node) in seen:
+            raise ValueError(
+                "CBOR payload contains a shared or self-referencing value "
+                "(CBOR tags 28/29); Serum presets do not use these"
+            )
+        seen.add(id(node))
+        if isinstance(node, dict):
+            if node and set(map(type, node)) != {str}:
+                bad = next(type(k).__name__ for k in node if type(k) is not str)
+                raise ValueError(
+                    f"CBOR payload has a non-string map key ({bad}); "
+                    "Serum presets use string keys only"
+                )
+            children = node.values()
+        else:
+            children = node
+        # set(map(type, ...)) runs in C, so a list of tens of millions of
+        # floats (sample data) is checked and skipped without a Python loop.
+        types = set(map(type, children))
+        if not types <= _CBOR_VALUE_TYPES:
+            bad = sorted(t.__name__ for t in types - _CBOR_VALUE_TYPES)[0]
+            raise ValueError(
+                f"CBOR payload holds a {bad} value; Serum presets hold only "
+                "maps, arrays, strings, bytes, numbers, booleans and null"
+            )
+        if types.isdisjoint(_CBOR_CONTAINERS):
+            continue
+        stack.extend((c, depth + 1) for c in children if isinstance(c, _CBOR_CONTAINERS))
 
 
 def wrap_xferjson(metadata: dict, cbor_bytes: bytes, *, version: int = 2) -> bytes:

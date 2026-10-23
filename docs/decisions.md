@@ -18,3 +18,28 @@
 **Reason:** A sample-based preset decodes to ~41 million Python floats; every extra live reference to that tree, or extra copy of the 160 MB input, stacks another gigabyte on the worker converting it. What remains is the cost of decoding the tree at all.
 
 **Alternatives considered:** Transforming the CBOR at the byte level without decoding the sample arrays, the only way below ~2 GB. It means a streaming CBOR rewriter for a change that is a handful of key edits; not worth it until a machine cannot run the current shape at all.
+
+## [2026-10-22] Treat every preset as untrusted; one exception type for bad input
+
+**Decision:** Corrupt or hostile input raises `ValueError` everywhere (`convert_preset_*`, `read_preset_metadata`, `unwrap_xferjson`). Declared sizes are checked before allocation: header JSON ≤ 16 MiB, decompressed CBOR ≤ 1 GiB, and the Zstd frame's own declared size must equal the header's. CBOR shared references (tags 28/29) are rejected. The limits are private constants, so this ships as 0.1.4. That is a patch even though which exceptions are raised changes, and files that used to be accepted (above the caps, or with shared references) are now rejected: no valid Serum preset is affected, and the old behaviour was a crash or a hang, so we treat it as a fix rather than an observable change.
+
+**Reason:** serum-render runs this over folders of downloaded presets in worker pools. A 13 KB file declaring a 400 MiB frame allocated all of it before the size check (`decompress()` honours the frame's declared size and ignores `max_output_size`); a text file passed to `read_preset_metadata` raised `MemoryError`; a file of a few hundred bytes of shared references made conversion hang; and cbor2's errors are not `ValueError`s. Each of these is an OOM kill or an uncaught exception in a worker rather than one skipped preset.
+
+**Alternatives considered:** Streaming decompression with a read cap (`stream_reader`), which bounds memory without trusting the frame but copies the output once more; checking the declared size first gets the same bound with the existing single allocation. Rejecting tags 28/29 at decode via `semantic_decoders`, which cbor2 5.x (still allowed by the `>=5.4` floor) does not support; a post-decode identity walk works on every version.
+
+## [2026-10-23] Count CBOR containers before decoding; require string keys
+
+**Decision:** Before `cbor2.loads`, a linear scan of CBOR item heads counts maps and arrays and rejects more than 1M, skipping runs of same-width floats in one step and stopping after 10M steps. After decoding, every map must have string keys. Any exception from `cbor2.loads` becomes `ValueError`.
+
+**Reason:** The second audit found that a 201-byte file of 4M empty lists took ~570 MiB and ~9 s to convert (about half decoding, about half the tree checks), and a 589-byte file of 16M reached ~2.2 GiB, all under the size caps. It also found that non-string map keys reached the converter and raised `AttributeError`, and that cbor2 5.4, still allowed by the dependency floor, raises `TypeError` and `MemoryError` on malformed input. The scan takes 0.13 s on 41M float32 values; its worst case (alternating float widths, single-byte items) stops at the step cap in about 3 s.
+
+**Alternatives considered:** Skipping empty containers in the shared-reference walk, which makes the walk cheaper but leaves the decode itself unbounded. Counting during decoding, which cbor2's C decoder has no hook for (`object_hook` sees maps only). Documenting a per-worker memory limit instead; the README now recommends one as well, for honest files near the 1 GiB cap, which no count limits.
+
+## [2026-10-23] Check value types and nesting depth after decoding
+
+**Decision:** After decoding, every value in the tree must be a map, array, string, bytes, int, float, bool or null, and the tree may nest at most 64 levels. The README's "every corrupt input raises `ValueError`" now holds on cbor2 5 as well as 6.
+
+**Reason:** The third audit found two inputs that still escaped on cbor2 5.4, which the `cbor2>=5.4` floor allows: a stray break byte decodes to a `break_marker` value and conversion failed with `CBOREncodeTypeError`, and 600 nested arrays decode fine but made the converter's recursive copy raise `RecursionError`. cbor2 6 rejects both itself. The test preset holds only those types and nests 4 deep. The type check reuses the walk's existing `set(map(type, ...))` pass, so it stays in C on sample data (0.57 s for 40M floats plus 3000 maps).
+
+**Alternatives considered:** Raising the floor to `cbor2>=6`, which fixes both without code but drops support for environments pinned to cbor2 5. Catching `RecursionError` in the converter, which fixes only one of the two and leaves non-plain values reaching `cbor2.dumps`.
+

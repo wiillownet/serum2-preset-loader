@@ -62,6 +62,33 @@ meta = read_preset_metadata("My Preset.SerumPreset")
 print(meta["presetName"], meta["presetAuthor"], meta["tags"])
 ```
 
+## Untrusted files
+
+Every corrupt, truncated or hostile input raises `ValueError` (or `OSError`
+if the file can't be read), so a batch loop can catch one exception type.
+Sizes the file declares are checked before anything is allocated:
+
+- the JSON header is capped at 16 MiB and the decompressed CBOR at 1 GiB;
+- a Zstd frame whose declared size disagrees with the header is rejected
+  without being decompressed;
+- the CBOR may hold at most 1M maps and arrays, counted before decoding
+  (the test preset holds 425).
+
+After decoding, the tree may nest at most 64 levels (the test preset nests
+4), every map must have string keys, and every value must be a map, array,
+string, bytes, number, boolean or null. CBOR shared references (tags 28/29),
+which Serum does not write, are rejected: they can describe cyclic or
+exponentially large trees in a few hundred bytes. These checks are what make
+the guarantee hold on cbor2 5 as well as 6: cbor2 5 accepts some malformed
+input (a stray break byte, unlimited nesting) that cbor2 6 rejects itself.
+
+**What this does not bound:** an honest file near the 1 GiB cap. Floats
+decode to about 32 bytes of Python memory each, so 1 GiB of float data is
+roughly 7 GB in one process. If you run conversions in a worker pool over
+files you don't trust, also set a per-worker memory limit (for example
+`resource.setrlimit(resource.RLIMIT_AS, ...)` in the worker initializer on
+Linux).
+
 ## Targeting a different Serum build
 
 The version markers Serum embeds in the processor-state CBOR are exposed as
