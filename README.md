@@ -308,7 +308,8 @@ attempts and the probes used to diff the two formats — see
 
 ## Caveats
 
-- The converter targets Serum 2.1.4 (the parameter table was measured on 2.1.5). If a future Serum version changes the schema, the
+- The converter targets Serum 2.1.4 (the parameter table was measured on
+  2.1.5). If a future Serum version changes the schema, the
   converter may need new mappings; `docs/DERIVATION.md` describes how to
   re-derive them.
 - Per-instance audio randomization (unison detune phase, sample start, etc.)

@@ -1,17 +1,18 @@
 """Read and write a measured set of Serum 2 parameters in a decoded preset tree.
 
-Each entry maps one DAW-automatable parameter (the 0 to 1 "norm" a host sees) to
-its field in the tree from :func:`decode_preset_file` and to the value Serum
+Each entry maps one DAW-automatable parameter (the 0 to 1 "norm" a host sees)
+to its field in the tree from :func:`decode_preset_file` and to the value Serum
 stores there, which is in the parameter's own units (seconds, voices, a
-wavetable position on a 1 to 256 scale, ...). The curves were measured on Serum 2.1.5 (``productVersion``
-``"2.1.5"``, processor ``version`` 11.0) through DawDreamer: each parameter set
-to 0, 0.25, 0.5, 0.75 and 1, state saved and decoded. The formulas were fit
-to those five points and then re-checked at 21 (0, 0.05, ..., 1): every point
-matched within float32 rounding (relative error under 1e-6).
+wavetable position on a 1 to 256 scale, ...). The curves were measured on
+Serum 2.1.5 (``productVersion`` ``"2.1.5"``, processor ``version`` 11.0)
+through DawDreamer: each parameter set to 0, 0.25, 0.5, 0.75 and 1, state
+saved and decoded. The formulas were fit to those five points and then
+re-checked at 21 (0, 0.05, ..., 1): every point matched within float32
+rounding (relative error under 1e-6). The tests check all 21.
 
-Serum leaves a parameter that is at its default out of the file. :func:`get_param`
-reads an absent field as the default, and :func:`set_param` removes the field
-whenever the stored value equals the default's.
+Serum leaves a parameter that is at its default out of the file.
+:func:`get_param` reads an absent field as the default, and :func:`set_param`
+removes the field whenever the stored value equals the default's.
 
 The wavetable position parameters (``osc_*_wt_pos``) only apply while that
 oscillator is a wavetable oscillator (``kParamType`` absent or ``"kOsc_WT"``).
@@ -53,7 +54,7 @@ class Param:
             raise ValueError(f"{self.name}: stored value {stored!r} is not a number")
         lo, hi = self._to_stored(0.0), self._to_stored(1.0)
         if not (lo - 1e-9 * abs(lo) <= stored <= hi + 1e-9 * abs(hi)):
-            raise ValueError(f"{self.name}: stored value {stored!r} is outside {lo}..{hi}")
+            raise ValueError(f"{self.name}: stored value {_show(stored)} is outside {lo}..{hi}")
         return min(1.0, max(0.0, self._to_norm(float(stored))))
 
     @property
@@ -61,11 +62,18 @@ class Param:
         return self.to_stored(self.default_norm)
 
 
+def _show(x) -> str:
+    # repr() of an int over 4300 digits raises on Python 3.11+.
+    if isinstance(x, int) and abs(x) > 10 ** 30:
+        return f"an int of {x.bit_length()} bits"
+    return repr(x)
+
+
 def _check_norm(name: str, norm: float) -> float:
     if isinstance(norm, bool) or not isinstance(norm, numbers.Real):
         raise ValueError(f"{name}: norm {norm!r} is not a number")
     if not 0.0 <= norm <= 1.0:   # also false for NaN; exact for huge ints
-        raise ValueError(f"{name}: norm {norm!r} is outside [0, 1]")
+        raise ValueError(f"{name}: norm {_show(norm)} is outside [0, 1]")
     return float(norm)
 
 
@@ -154,20 +162,20 @@ def _module(tree: dict, keys: Tuple[str, ...], name: str) -> dict:
     return node
 
 
-def _plain(module: dict, name: str) -> dict:
+def _plain(module: dict, name: str, where: Tuple[str, ...]) -> dict:
     """The module's plainParams as a map ("default" or missing reads as {})."""
     plain = module.get("plainParams", {})
     if plain == "default":
         return {}
     if not isinstance(plain, dict):
-        raise ValueError(f"{name}: plainParams is {plain!r}, not a map")
+        raise ValueError(f"{name}: {'.'.join(where)}.plainParams is {plain!r}, not a map")
     return plain
 
 
 def _check_wavetable(tree: dict, param: Param) -> None:
     if param.wavetable_osc:
         osc = _module(tree, (param.wavetable_osc,), param.name)
-        kind = _plain(osc, param.name).get("kParamType", "kOsc_WT")
+        kind = _plain(osc, param.name, (param.wavetable_osc,)).get("kParamType", "kOsc_WT")
         if kind != "kOsc_WT":
             raise ValueError(f"{param.name}: {param.wavetable_osc} is {kind!r}, not a "
                              "wavetable oscillator, so its wavetable position does nothing")
@@ -176,7 +184,7 @@ def _check_wavetable(tree: dict, param: Param) -> None:
 def get_param(tree: dict, name: str) -> float:
     """Return parameter ``name``'s norm; an absent field reads as the default."""
     param = _lookup(name)
-    plain = _plain(_module(tree, param.path[:-2], param.name), param.name)
+    plain = _plain(_module(tree, param.path[:-2], param.name), param.name, param.path[:-2])
     _check_wavetable(tree, param)
     if param.path[-1] not in plain:
         return param.default_norm
@@ -196,7 +204,7 @@ def set_param(tree: dict, name: str, norm: float) -> None:
     param = _lookup(name)
     stored = param.to_stored(norm)
     module = _module(tree, param.path[:-2], param.name)
-    plain = _plain(module, param.name)
+    plain = _plain(module, param.name, param.path[:-2])
     _check_wavetable(tree, param)
     if math.isclose(stored, param.default_stored, rel_tol=1e-9):
         plain.pop(param.path[-1], None)     # no-op on "default" or a missing map

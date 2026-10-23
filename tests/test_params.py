@@ -10,6 +10,7 @@ import pytest
 
 from serum2_preset_loader import (
     PARAMS,
+    Param,
     convert_preset_tree,
     decode_preset_bytes,
     decode_preset_file,
@@ -204,7 +205,7 @@ def test_unknown_name(name):
 def test_malformed_plainparams_rejected(plain):
     tree = empty_tree()
     tree["Env0"]["plainParams"] = plain
-    with pytest.raises(ValueError, match="not a map"):
+    with pytest.raises(ValueError, match=r"Env0\.plainParams is .*, not a map"):
         get_param(tree, "env1_decay")
     for norm in (0.5, 0.75):    # default and non-default
         with pytest.raises(ValueError, match="not a map"):
@@ -248,10 +249,13 @@ def test_wt_pos_rejected_on_non_wavetable_oscillator(kind):
     assert get_param(tree, "osc_a_wt_pos") == 0.0   # and other oscillators are unaffected
 
 
-@pytest.mark.parametrize("plain", [{}, "default", {"kParamType": "kOsc_WT"}])
+@pytest.mark.parametrize("plain", [{}, "default", {"kParamType": "kOsc_WT"}, None])
 def test_wt_pos_allowed_on_wavetable_oscillator(plain):
     tree = empty_tree()
-    tree["Oscillator0"]["plainParams"] = plain
+    if plain is None:
+        del tree["Oscillator0"]["plainParams"]
+    else:
+        tree["Oscillator0"]["plainParams"] = plain
     set_param(tree, "osc_a_wt_pos", 0.5)
     assert get_param(tree, "osc_a_wt_pos") == 0.5
 
@@ -264,6 +268,17 @@ def test_missing_module_named_and_not_created():
     with pytest.raises(KeyError, match=r"Oscillator0\.WTOsc0"):
         get_param(tree, "osc_a_wt_pos")
     assert "WTOsc0" not in tree["Oscillator0"]
+
+
+def test_param_type_is_exported():
+    assert all(type(p) is Param for p in PARAMS.values())
+
+
+def test_huge_int_named_in_error_without_its_digits():
+    with pytest.raises(ValueError, match=r"filter1_cutoff: norm an int of \d+ bits"):
+        set_param(empty_tree(), "filter1_cutoff", 10**5000)
+    with pytest.raises(ValueError, match="env1_decay: stored value an int of"):
+        PARAMS["env1_decay"].to_norm(10**5000)
 
 
 def test_params_is_read_only():
