@@ -75,3 +75,11 @@
 
 **Alternatives considered:** Continuing by hand with `twine` (works, but repeats every release and needs the token). A token stored as a repository secret (simpler PyPI setup, but a long-lived credential that can leak).
 
+
+## [2026-10-23] A measured table for 9 parameters; absent means default
+
+**Decision:** `params.py` maps 9 DAW parameters (oscillator A unison, detune and wavetable position; filter 1 cutoff and resonance; Env 1 attack, decay, sustain and release) to their tree paths, with a per-parameter conversion between the DAW's 0 to 1 norm and the stored value. `get_param` reads an absent field as the plugin's exact `defaultValue`; `set_param` always writes a float and deletes the field when the stored value equals the default's (relative tolerance 1e-9). Missing modules raise `KeyError` and are never created.
+
+**Reason:** A DawDreamer probe of Serum 2.1.5 set each parameter to 0, 0.25, 0.5, 0.75 and 1 and decoded the saved state. Stored units differ per parameter (seconds as 32·n⁵, voices as min(16, floor(16·n) + 1), frames as 1 + 255·n, percent, or the norm itself), so a generator can't write norms directly. Serum omitted every one of the 9 fields at its default, in the probe baseline and in factory presets, so deleting at the default reproduces what Serum writes. The curves fit those 5 measured points each; values in between are not individually verified. Creating a missing module would guess at a structure Serum builds itself.
+
+**Alternatives considered:** Writing the default value explicitly instead of deleting it (Serum likely accepts it, but the file would differ from Serum's own). Probing all 2623 parameters into the table now: the full probe mapped 457 of them, but 9 with checked curves are enough to start a search loop, and FX parameters weren't mapped at all because the baseline had no FX loaded.

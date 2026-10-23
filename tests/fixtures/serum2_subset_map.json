@@ -1,0 +1,322 @@
+{
+ "source": "DawDreamer 0.9.0 probe of Serum2.vst3; stored is null where the field was absent (value equal to the default)",
+ "productVersion": "2.1.5",
+ "processorVersion": 11.0,
+ "params": [
+  {
+   "index": 44,
+   "name": "A Unison",
+   "path": "Oscillator0.plainParams.kParamUnison",
+   "default_norm": 0.0,
+   "discrete": true,
+   "in_baseline": false,
+   "samples": [
+    [
+     0.0,
+     null,
+     "1"
+    ],
+    [
+     0.25,
+     5.0,
+     "5"
+    ],
+    [
+     0.5,
+     9.0,
+     "9"
+    ],
+    [
+     0.75,
+     13.0,
+     "13"
+    ],
+    [
+     1.0,
+     16.0,
+     "16"
+    ]
+   ]
+  },
+  {
+   "index": 46,
+   "name": "A Uni Detune",
+   "path": "Oscillator0.plainParams.kParamDetune",
+   "default_norm": 0.5,
+   "discrete": false,
+   "in_baseline": false,
+   "samples": [
+    [
+     0.0,
+     0.0,
+     "0.00"
+    ],
+    [
+     0.25,
+     0.0625,
+     "0.06"
+    ],
+    [
+     0.5,
+     null,
+     "0.25"
+    ],
+    [
+     0.75,
+     0.5625,
+     "0.56"
+    ],
+    [
+     1.0,
+     1.0,
+     "1.00"
+    ]
+   ]
+  },
+  {
+   "index": 59,
+   "name": "A WT Pos",
+   "path": "Oscillator0.WTOsc0.plainParams.kParamTablePos",
+   "default_norm": 0.0,
+   "discrete": false,
+   "in_baseline": false,
+   "samples": [
+    [
+     0.0,
+     null,
+     "1"
+    ],
+    [
+     0.25,
+     64.75,
+     "3"
+    ],
+    [
+     0.5,
+     128.5,
+     "5"
+    ],
+    [
+     0.75,
+     192.25,
+     "7"
+    ],
+    [
+     1.0,
+     256.0,
+     "9"
+    ]
+   ]
+  },
+  {
+   "index": 205,
+   "name": "Filter 1 Freq",
+   "path": "VoiceFilter0.plainParams.kParamFreq",
+   "default_norm": 0.5,
+   "discrete": false,
+   "in_baseline": false,
+   "samples": [
+    [
+     0.0,
+     0.0,
+     "8"
+    ],
+    [
+     0.25,
+     0.25,
+     "59"
+    ],
+    [
+     0.5,
+     null,
+     "425"
+    ],
+    [
+     0.75,
+     0.75,
+     "3064"
+    ],
+    [
+     1.0,
+     1.0,
+     "22050"
+    ]
+   ]
+  },
+  {
+   "index": 206,
+   "name": "Filter 1 Res",
+   "path": "VoiceFilter0.plainParams.kParamReso",
+   "default_norm": 0.10000000149011612,
+   "discrete": false,
+   "in_baseline": false,
+   "samples": [
+    [
+     0.0,
+     0.0,
+     "0"
+    ],
+    [
+     0.25,
+     25.0,
+     "25"
+    ],
+    [
+     0.5,
+     50.0,
+     "50"
+    ],
+    [
+     0.75,
+     75.0,
+     "75"
+    ],
+    [
+     1.0,
+     100.0,
+     "100"
+    ]
+   ]
+  },
+  {
+   "index": 224,
+   "name": "Env 1 Attack",
+   "path": "Env0.plainParams.kParamAttack",
+   "default_norm": 0.12559431791305542,
+   "discrete": false,
+   "in_baseline": false,
+   "samples": [
+    [
+     0.0,
+     0.0,
+     "0.0 ms"
+    ],
+    [
+     0.25,
+     0.03125,
+     "31 ms"
+    ],
+    [
+     0.5,
+     1.0,
+     "1.00 s"
+    ],
+    [
+     0.75,
+     7.59375,
+     "7.59 s"
+    ],
+    [
+     1.0,
+     32.0,
+     "32.0 s"
+    ]
+   ]
+  },
+  {
+   "index": 226,
+   "name": "Env 1 Decay",
+   "path": "Env0.plainParams.kParamDecay",
+   "default_norm": 0.5,
+   "discrete": false,
+   "in_baseline": false,
+   "samples": [
+    [
+     0.0,
+     0.0,
+     "0.0 ms"
+    ],
+    [
+     0.25,
+     0.03125,
+     "31 ms"
+    ],
+    [
+     0.5,
+     null,
+     "1.00 s"
+    ],
+    [
+     0.75,
+     7.59375,
+     "7.59 s"
+    ],
+    [
+     1.0,
+     32.0,
+     "32.0 s"
+    ]
+   ]
+  },
+  {
+   "index": 227,
+   "name": "Env 1 Sustain",
+   "path": "Env0.plainParams.kParamSustain",
+   "default_norm": 1.0,
+   "discrete": false,
+   "in_baseline": false,
+   "samples": [
+    [
+     0.0,
+     0.0,
+     "-∞ dB"
+    ],
+    [
+     0.25,
+     0.25,
+     "-24.1 dB"
+    ],
+    [
+     0.5,
+     0.5,
+     "-12.0 dB"
+    ],
+    [
+     0.75,
+     0.75,
+     "-5.0 dB"
+    ],
+    [
+     1.0,
+     null,
+     "0.0 dB"
+    ]
+   ]
+  },
+  {
+   "index": 228,
+   "name": "Env 1 Release",
+   "path": "Env0.plainParams.kParamRelease",
+   "default_norm": 0.2150000035762787,
+   "discrete": false,
+   "in_baseline": false,
+   "samples": [
+    [
+     0.0,
+     0.0,
+     "0.0 ms"
+    ],
+    [
+     0.25,
+     0.03125,
+     "31 ms"
+    ],
+    [
+     0.5,
+     1.0,
+     "1.00 s"
+    ],
+    [
+     0.75,
+     7.59375,
+     "7.59 s"
+    ],
+    [
+     1.0,
+     32.0,
+     "32.0 s"
+    ]
+   ]
+  }
+ ]
+}

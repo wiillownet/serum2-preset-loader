@@ -23,6 +23,7 @@ from .converter import (
     preset_cbor_to_processor_cbor,
     read_preset_metadata,
 )
+from .params import PARAMS, get_param, set_param
 from .wrappers import (
     build_juce_vst3_state,
     juce_memoryblock_b64decode,
@@ -48,6 +49,9 @@ __all__ = [
     "convert_preset_tree",
     "preset_cbor_to_processor_cbor",
     "read_preset_metadata",
+    "PARAMS",
+    "get_param",
+    "set_param",
     "build_juce_vst3_state",
     "juce_memoryblock_b64decode",
     "juce_memoryblock_b64encode",
