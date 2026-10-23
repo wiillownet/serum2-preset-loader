@@ -66,7 +66,7 @@ def _check_norm(name: str, norm: float) -> float:
 def _unison_to_norm(voices: float) -> float:
     # Middle of the voice count's step, so get -> set keeps the count.
     if voices != int(voices):
-        raise ValueError(f"osc_a_unison: stored value {voices!r} is not a whole voice count")
+        raise ValueError(f"unison: stored value {voices!r} is not a whole voice count")
     return (voices - 1) / 16 + 1 / 32
 
 
@@ -78,28 +78,52 @@ def _time_to_norm(seconds: float) -> float:
     return (seconds / 32.0) ** 0.2
 
 
-_TABLE = [
-    Param("osc_a_unison", 44, "A Unison", ("Oscillator0", "plainParams", "kParamUnison"),
-          0.0, True, lambda n: min(16, math.floor(16 * n) + 1), _unison_to_norm),
-    Param("osc_a_detune", 46, "A Uni Detune", ("Oscillator0", "plainParams", "kParamDetune"),
-          0.5, False, lambda n: n * n, math.sqrt),
-    Param("osc_a_wt_pos", 59, "A WT Pos", ("Oscillator0", "WTOsc0", "plainParams", "kParamTablePos"),
-          0.0, False, lambda n: 1 + 255 * n, lambda s: (s - 1) / 255),
-    # Stored as the norm; Serum displays about 8.18 * 2697 ** norm Hz.
-    Param("filter1_cutoff", 205, "Filter 1 Freq", ("VoiceFilter0", "plainParams", "kParamFreq"),
-          0.5, False, lambda n: n, lambda s: s),
-    Param("filter1_reso", 206, "Filter 1 Res", ("VoiceFilter0", "plainParams", "kParamReso"),
-          0.10000000149011612, False, lambda n: 100 * n, lambda s: s / 100),
-    Param("env1_attack", 224, "Env 1 Attack", ("Env0", "plainParams", "kParamAttack"),
-          0.12559431791305542, False, _time, _time_to_norm),
-    Param("env1_decay", 226, "Env 1 Decay", ("Env0", "plainParams", "kParamDecay"),
-          0.5, False, _time, _time_to_norm),
-    # Stored as the norm; Serum displays the level as gain norm ** 2 in dB.
-    Param("env1_sustain", 227, "Env 1 Sustain", ("Env0", "plainParams", "kParamSustain"),
-          1.0, False, lambda n: n, lambda s: s),
-    Param("env1_release", 228, "Env 1 Release", ("Env0", "plainParams", "kParamRelease"),
-          0.2150000035762787, False, _time, _time_to_norm),
-]
+_TABLE = []
+
+# Oscillators A, B, C: (DAW indexes of Unison, Uni Detune, WT Pos).
+for _i, (_osc, (_uni, _det, _wt)) in enumerate(
+        {"a": (44, 46, 59), "b": (99, 101, 114), "c": (154, 156, 169)}.items()):
+    _O, _mod = _osc.upper(), f"Oscillator{_i}"
+    _TABLE += [
+        Param(f"osc_{_osc}_unison", _uni, f"{_O} Unison", (_mod, "plainParams", "kParamUnison"),
+              0.0, True, lambda n: min(16, math.floor(16 * n) + 1), _unison_to_norm),
+        Param(f"osc_{_osc}_detune", _det, f"{_O} Uni Detune", (_mod, "plainParams", "kParamDetune"),
+              0.5, False, lambda n: n * n, math.sqrt),
+        Param(f"osc_{_osc}_wt_pos", _wt, f"{_O} WT Pos",
+              (_mod, f"WTOsc{_i}", "plainParams", "kParamTablePos"),
+              0.0, False, lambda n: 1 + 255 * n, lambda s: (s - 1) / 255),
+    ]
+
+# Filters 1, 2: (DAW indexes of Freq, Res).
+for _i, (_freq, _res) in enumerate([(205, 206), (216, 217)]):
+    _mod = f"VoiceFilter{_i}"
+    _TABLE += [
+        # Stored as the norm; Serum displays about 8.18 * 2697 ** norm Hz.
+        Param(f"filter{_i + 1}_cutoff", _freq, f"Filter {_i + 1} Freq",
+              (_mod, "plainParams", "kParamFreq"), 0.5, False, lambda n: n, lambda s: s),
+        Param(f"filter{_i + 1}_reso", _res, f"Filter {_i + 1} Res",
+              (_mod, "plainParams", "kParamReso"),
+              0.10000000149011612, False, lambda n: 100 * n, lambda s: s / 100),
+    ]
+
+# Envelopes 1-4: (DAW indexes of Attack, Decay, Sustain, Release), attack default.
+for _i, (_atk, _dec, _sus, _rel, _atk_default) in enumerate([
+        (224, 226, 227, 228, 0.12559431791305542),   # Env 1, the amp envelope
+        (232, 234, 235, 236, 0.10999999940395355),
+        (242, 244, 245, 246, 0.10999999940395355),
+        (252, 254, 255, 256, 0.10999999940395355)]):
+    _mod, _n = f"Env{_i}", _i + 1
+    _TABLE += [
+        Param(f"env{_n}_attack", _atk, f"Env {_n} Attack", (_mod, "plainParams", "kParamAttack"),
+              _atk_default, False, _time, _time_to_norm),
+        Param(f"env{_n}_decay", _dec, f"Env {_n} Decay", (_mod, "plainParams", "kParamDecay"),
+              0.5, False, _time, _time_to_norm),
+        # Stored as the norm; Serum displays the level as gain norm ** 2 in dB.
+        Param(f"env{_n}_sustain", _sus, f"Env {_n} Sustain", (_mod, "plainParams", "kParamSustain"),
+              1.0, False, lambda n: n, lambda s: s),
+        Param(f"env{_n}_release", _rel, f"Env {_n} Release", (_mod, "plainParams", "kParamRelease"),
+              0.2150000035762787, False, _time, _time_to_norm),
+    ]
 
 PARAMS: Mapping[str, Param] = MappingProxyType({p.name: p for p in _TABLE})
 

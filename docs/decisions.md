@@ -83,3 +83,11 @@
 **Reason:** A DawDreamer probe of Serum 2.1.5 set each parameter to 0, 0.25, 0.5, 0.75 and 1 and decoded the saved state. Stored units differ per parameter (seconds as 32·n⁵, voices as min(16, floor(16·n) + 1), frames as 1 + 255·n, percent, or the norm itself), so a generator can't write norms directly. Serum omitted every one of the 9 fields at its default, in the probe baseline and in factory presets, so deleting at the default reproduces what Serum writes. The curves were fit to those 5 points each, then re-checked by a second probe at 21 points (0, 0.05, ..., 1), all within float32 rounding. Creating a missing module would guess at a structure Serum builds itself.
 
 **Alternatives considered:** Writing the default value explicitly instead of deleting it (Serum likely accepts it, but the file would differ from Serum's own). Probing all 2623 parameters into the table now: the full probe mapped 457 of them, but 9 with checked curves are enough to start a search loop, and FX parameters weren't mapped at all because the baseline had no FX loaded.
+
+## [2026-10-23] Extend the parameter table to oscillators B and C, filter 2 and envelopes 2 to 4
+
+**Decision:** `PARAMS` grows from 9 to 29 entries: unison, detune and wavetable position for oscillators B and C, cutoff and resonance for filter 2, and attack, decay, sustain and release for Env 2 to 4. They reuse the existing curves. The table is built in three loops (oscillators, filters, envelopes) with each DAW index listed explicitly.
+
+**Reason:** In the full Serum 2.1.5 probe, all 20 sit at the matching path in their own module (`Oscillator1`, `WTOsc1`, `VoiceFilter1`, `Env1`, ...) and match the 9 measured curves at the 5 probe points, then at 21 points in a second probe, within float32 rounding. The one difference is the Env 2 to 4 attack default (`defaultValue` 0.10999999940395355, about 0.5 ms, against Env 1's 0.1256), which is kept per parameter. DAW indexes are listed rather than computed because their spacing is irregular (Env 1 to 4 attack: 224, 232, 242, 252).
+
+**Alternatives considered:** Writing out all 29 rows by hand (clearer one at a time, but 20 near-copies to keep in sync). Computing indexes from offsets (shorter, but wrong for the envelopes).

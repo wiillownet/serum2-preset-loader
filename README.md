@@ -124,12 +124,14 @@ set_param(tree, "env1_attack", 0.25)      # 31 ms
 write_preset_file("My Preset (edited).SerumPreset", header, tree)
 ```
 
-Only 9 parameters are covered so far (`PARAMS` lists them): oscillator A
-unison, detune and wavetable position, filter 1 cutoff and resonance, and the
-Env 1 (amp) attack, decay, sustain and release. Each curve was measured on
-Serum 2.1.5 at 5 points (0, 0.25, 0.5, 0.75, 1) and re-checked at 21. Serum leaves a parameter
-out of the file when it's at its default, so `get_param` reads a missing field
-as the default and `set_param` removes the field when you set the default.
+Only 29 parameters are covered so far (`PARAMS` lists them): unison, detune
+and wavetable position for oscillators A, B and C (`osc_a_unison`, ...),
+cutoff and resonance for filters 1 and 2 (`filter1_cutoff`, ...), and attack,
+decay, sustain and release for Env 1 (the amp envelope) through Env 4
+(`env1_attack`, ...). Each curve was measured on Serum 2.1.5 at 5 points (0,
+0.25, 0.5, 0.75, 1) and re-checked at 21. Serum leaves a parameter out of the
+file when it's at its default, so `get_param` reads a missing field as the
+default and `set_param` removes the field when you set the default.
 
 ## Targeting a different Serum build
 

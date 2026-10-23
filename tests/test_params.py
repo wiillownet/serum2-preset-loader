@@ -26,11 +26,12 @@ CONTINUOUS = [p for p in PARAMS.values() if not p.discrete]
 
 def empty_tree() -> dict:
     """The modules the table touches, all at defaults."""
-    return {
-        "Oscillator0": {"plainParams": {}, "WTOsc0": {"plainParams": {}}},
-        "VoiceFilter0": {"plainParams": {}},
-        "Env0": {"plainParams": {}},
-    }
+    tree: dict = {}
+    for p in PARAMS.values():
+        node = tree
+        for key in p.path[:-2]:
+            node = node.setdefault(key, {"plainParams": {}})
+    return tree
 
 
 def field(tree: dict, name: str) -> dict:
@@ -139,9 +140,8 @@ def test_default_plainparams_string_is_replaced():
 
 def test_set_on_real_preset_survives_encode_and_decode(preset):
     header, tree = preset
-    values = {"osc_a_unison": 0.5, "osc_a_detune": 0.3, "osc_a_wt_pos": 0.4,
-              "filter1_cutoff": 0.25, "filter1_reso": 0.6, "env1_attack": 0.25,
-              "env1_decay": 0.35, "env1_sustain": 0.7, "env1_release": 0.45}
+    # 0.6 is no parameter's default, so every field gets written.
+    values = {name: 0.6 for name in PARAMS}
     for name, norm in values.items():
         set_param(tree, name, norm)
     _h, tree2 = decode_preset_bytes(encode_preset(header, tree))
