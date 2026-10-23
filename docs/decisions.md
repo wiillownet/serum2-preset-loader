@@ -59,3 +59,11 @@
 
 **Alternatives considered:** Using `encode_cbor` in the converter too. Revisit if Serum ever rejects 64-bit floats in state.
 
+## [2026-10-23] Header and tree metadata must agree; writes are unique-temp and atomic
+
+**Decision:** `encode_preset` raises `ValueError` naming any key the header and the tree's top level both hold with different values or types, replacing the earlier copy-header-into-tree behaviour; `set_preset_metadata` sets a field in both. `write_preset_file` writes through a temp file with a random name in the target's folder (`O_EXCL`), keeps an existing file's permission bits, follows symlinks, and accepts `bytes` paths; integer paths are rejected.
+
+**Reason:** Copying the header over the tree silently discarded tree-only edits and could change a type Serum wrote (int `10` over float `10.0`); in the test preset every shared key already agrees, so the check costs nothing on unedited files. The per-process temp name let two threads share one temp file, and the second audit reproduced a "successful" write leaving a corrupt preset. `mkstemp` was not used because it creates files as 0600 and there is no thread-safe way to read the umask.
+
+**Alternatives considered:** Header wins or tree wins (both silently drop an edit on the other side). Adding the thread id to the temp name, which fixes threads but not other processes reusing a pid.
+

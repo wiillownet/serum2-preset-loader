@@ -18,6 +18,7 @@ from serum2_preset_loader import (
     decode_preset_file,
     encode_cbor,
     encode_preset,
+    set_preset_metadata,
     write_preset_file,
 )
 from serum2_preset_loader.wrappers import unwrap_xferjson, wrap_xferjson
@@ -151,7 +152,7 @@ def test_hash_is_md5_of_compressed_payload(preset_bytes):
 def test_edit_is_written_and_read_back(preset_bytes, tmp_path):
     header, tree = decode_preset_bytes(preset_bytes)
     tree["VoiceFilter0"]["plainParams"]["kParamFreq"] = 0.25
-    header = {**header, "presetName": "edited"}
+    set_preset_metadata(header, tree, presetName="edited")
     path = tmp_path / "edited.SerumPreset"
     write_preset_file(path, header, tree)
     header2, tree2 = decode_preset_file(path)
@@ -262,16 +263,50 @@ def test_decode_respects_version_override(preset_bytes, monkeypatch):
     assert struct.unpack("<I", out[17 + struct.unpack("<Q", out[9:17])[0] + 4:][:4])[0] == 3
 
 
-def test_header_metadata_is_copied_into_tree(preset_bytes):
-    """Renaming in the header alone used to leave the tree's own presetName
-    behind, so the file disagreed with itself."""
+@pytest.mark.parametrize("side", ["header", "tree"])
+def test_header_tree_mismatch_raises_naming_the_key(preset_bytes, side):
+    """Editing only one side used to be silently overwritten by the header."""
     header, tree = decode_preset_bytes(preset_bytes)
-    header = {**header, "presetName": "renamed", "tags": ["Bass"]}
+    (header if side == "header" else tree)["presetName"] = "renamed"
+    with pytest.raises(ValueError, match="disagree on 'presetName'"):
+        encode_preset(header, tree)
+
+
+def test_mismatch_check_compares_types(preset_bytes):
+    header, tree = decode_preset_bytes(preset_bytes)
+    header["version"] = 10            # tree holds float 10.0; 10 == 10.0
+    with pytest.raises(ValueError, match="'version'"):
+        encode_preset(header, tree)
+
+
+def test_set_preset_metadata_sets_both_sides(preset_bytes):
+    header, tree = decode_preset_bytes(preset_bytes)
+    set_preset_metadata(header, tree, presetName="renamed", tags=["Bass"], extra="x")
+    assert header["presetName"] == tree["presetName"] == "renamed"
+    assert header["tags"] == tree["tags"] == ["Bass"]
+    assert header["extra"] == "x" and "extra" not in tree   # header-only key
     out_header, out_tree = decode_preset_bytes(encode_preset(header, tree))
     assert out_header["presetName"] == out_tree["presetName"] == "renamed"
-    assert out_tree["tags"] == ["Bass"]
     assert "hash" not in out_tree
-    assert tree["presetName"] == "test_preset"       # input not modified
+
+
+def test_set_preset_metadata_refuses_hash(preset_bytes):
+    header, tree = decode_preset_bytes(preset_bytes)
+    with pytest.raises(ValueError, match="hash"):
+        set_preset_metadata(header, tree, hash="0" * 32)
+
+
+@pytest.mark.parametrize("make, match", [
+    (lambda h, t: ({**h, 1: "x"}, t), "header keys must be str"),
+    # Maps holding only non-str keys, so sorted() itself can't fail first.
+    (lambda h, t: (h, {**t, "Extra": {1: {}}}), "map keys must be str"),
+    (lambda h, t: (h, {**t, "Extra": {(1, 2): 0.5}}), "map keys must be str"),
+])
+def test_non_string_keys_are_rejected_on_write(preset_bytes, make, match):
+    """The decoder rejects them, so a file written with one couldn't be read."""
+    header, tree = make(*decode_preset_bytes(preset_bytes))
+    with pytest.raises(TypeError, match=match):
+        encode_preset(header, tree)
 
 
 @pytest.mark.parametrize("header, tree", [([], {}), (None, {}), ({"fileType": "SerumPreset"}, [1])])
@@ -358,4 +393,100 @@ def test_readme_examples_run(tmp_path):
     finally:
         os.chdir(cwd)
     h, t = decode_preset_file(tmp_path / "My Preset (darker).SerumPreset")
+    assert t["VoiceFilter0"]["plainParams"]["kParamFreq"] == 0.25
     assert h["presetName"] == t["presetName"] == "My Preset (darker)"
+
+
+
+# ─── write_preset_file edge cases (round-2 audit) ──────────────────────────
+
+def test_concurrent_writers_never_leave_a_corrupt_file(preset_bytes, tmp_path):
+    """Writers used to share one temp name per process; a slow writer could
+    keep writing into the file another thread had already moved into place."""
+    import threading
+
+    header, tree = decode_preset_bytes(preset_bytes)
+    path = tmp_path / "shared.SerumPreset"
+    errors = []
+
+    def writer(i):
+        h, t = dict(header), dict(tree)
+        set_preset_metadata(h, t, presetName=f"w{i}")
+        try:
+            for _ in range(20):
+                write_preset_file(path, h, t)
+        except Exception as e:  # noqa: BLE001
+            errors.append(e)
+
+    threads = [threading.Thread(target=writer, args=(i,)) for i in range(4)]
+    for th in threads:
+        th.start()
+    for th in threads:
+        th.join()
+    assert errors == []
+    h, t = decode_preset_file(path)        # a complete, valid preset
+    assert h["presetName"] == t["presetName"] and h["presetName"].startswith("w")
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["shared.SerumPreset"]
+
+
+def test_bytes_path_round_trips(preset_bytes, tmp_path):
+    header, tree = decode_preset_bytes(preset_bytes)
+    path = os.fsencode(str(tmp_path / "b.SerumPreset"))
+    write_preset_file(path, header, tree)
+    assert decode_preset_file(path)[0]["presetName"] == "test_preset"
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["b.SerumPreset"]
+
+
+@pytest.mark.parametrize("bad", [0, 1, True])
+def test_int_paths_are_rejected_not_treated_as_file_descriptors(preset_bytes, bad):
+    header, tree = decode_preset_bytes(preset_bytes)
+    with pytest.raises(TypeError):
+        decode_preset_file(bad)
+    with pytest.raises(TypeError):
+        write_preset_file(bad, header, tree)
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX permission bits")
+def test_existing_file_keeps_its_mode(preset_bytes, tmp_path):
+    header, tree = decode_preset_bytes(preset_bytes)
+    path = tmp_path / "private.SerumPreset"
+    path.write_bytes(b"old")
+    os.chmod(path, 0o600)
+    write_preset_file(path, header, tree)
+    assert os.stat(path).st_mode & 0o777 == 0o600
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX umask")
+def test_new_file_gets_umask_mode_not_mkstemp_0600(preset_bytes, tmp_path):
+    header, tree = decode_preset_bytes(preset_bytes)
+    path = tmp_path / "new.SerumPreset"
+    old = os.umask(0o022)
+    try:
+        write_preset_file(path, header, tree)
+    finally:
+        os.umask(old)
+    assert os.stat(path).st_mode & 0o777 == 0o644
+
+
+@pytest.mark.skipif(not hasattr(os, "symlink"), reason="needs symlinks")
+def test_symlink_target_is_replaced_and_link_kept(preset_bytes, tmp_path):
+    header, tree = decode_preset_bytes(preset_bytes)
+    real = tmp_path / "real.SerumPreset"
+    real.write_bytes(b"old")
+    link = tmp_path / "link.SerumPreset"
+    try:
+        os.symlink(real, link)
+    except OSError:
+        pytest.skip("symlinks not permitted here")
+    write_preset_file(link, header, tree)
+    assert link.is_symlink()
+    assert decode_preset_file(real)[0]["presetName"] == "test_preset"
+
+
+def test_failed_move_raises_and_cleans_up(preset_bytes, tmp_path):
+    header, tree = decode_preset_bytes(preset_bytes)
+    folder = tmp_path / "a folder.SerumPreset"
+    folder.mkdir()
+    with pytest.raises(OSError):
+        write_preset_file(folder, header, tree)
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["a folder.SerumPreset"]

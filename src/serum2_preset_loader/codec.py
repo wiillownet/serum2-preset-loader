@@ -24,7 +24,9 @@ from __future__ import annotations
 
 import hashlib
 import os
+import stat
 import struct
+import uuid
 from typing import Any, Union
 
 import zstandard
@@ -32,7 +34,7 @@ import zstandard
 from . import converter
 from .wrappers import _loads_cbor_tree, unwrap_xferjson, wrap_xferjson_precompressed
 
-PathLike = Union[str, "os.PathLike[str]"]
+PathLike = Union[str, bytes, "os.PathLike[str]", "os.PathLike[bytes]"]
 
 # Long all-float lists are encoded in chunks of this many values: a single
 # value that needs 64 bits then only sends its own chunk down the slow path.
@@ -93,9 +95,14 @@ def _float_chunk(xs: list) -> bytes:
 
 
 def _map_items(x: dict, sort_keys: bool):
-    if sort_keys and all(type(k) is str for k in x):
-        return sorted(x.items())
-    return x.items()
+    if not sort_keys:
+        return x.items()
+    if not all(type(k) is str for k in x):
+        bad = next(type(k).__name__ for k in x if type(k) is not str)
+        # Serum's maps have string keys only, and decode_preset_* rejects
+        # anything else, so a file written with one couldn't be read back.
+        raise TypeError(f"preset map keys must be str, got {bad}")
+    return sorted(x.items())
 
 
 def _encode(x: Any, out: list, sort_keys: bool) -> None:
@@ -145,9 +152,10 @@ def encode_cbor(obj: Any, *, sort_keys: bool = False) -> bytes:
     """Encode ``obj`` to CBOR with Serum 2's float widths (see module docstring).
 
     Maps keep the given key order unless ``sort_keys`` is true, which sorts
-    any map whose keys are all strings in lexicographic order, as Serum's
-    files are. Tuples encode as arrays. Raises ``TypeError`` for other types
-    and ``ValueError`` for integers outside CBOR's 64-bit range.
+    every map's keys in lexicographic order, as Serum's files are, and
+    requires them all to be strings. Tuples encode as arrays. Raises
+    ``TypeError`` for other types (or a non-string key when sorting) and
+    ``ValueError`` for integers outside CBOR's 64-bit range.
     """
     out: list[bytes] = []
     _encode(obj, out, sort_keys)
@@ -172,55 +180,102 @@ def decode_preset_bytes(preset_bytes: bytes) -> tuple[dict, dict]:
     return header, _loads_cbor_tree(cbor)
 
 
+def _fspath(path: PathLike) -> str:
+    # open() accepts an int as a file descriptor (and True as fd 1) and
+    # closes it afterwards; os.fspath rejects ints.
+    return os.fsdecode(os.fspath(path))
+
+
 def decode_preset_file(path: PathLike) -> tuple[dict, dict]:
-    """Read a ``.SerumPreset`` from disk and return ``(header, tree)``."""
-    with open(path, "rb") as f:
+    """Read a ``.SerumPreset`` from disk and return ``(header, tree)``.
+
+    ``path`` is a ``str``, ``bytes`` or path-like object.
+    """
+    with open(_fspath(path), "rb") as f:
         return decode_preset_bytes(f.read())
 
 
-# Header keys whose values the tree repeats at its top level. The header is
-# what Serum's browser and read_preset_metadata see; encode_preset copies these
-# into the tree so editing one place can't leave the file disagreeing with
-# itself.
+# Keys the header and the tree's top level both carry (presetName, tags,
+# presetAuthor ...). The header is what Serum's browser and
+# read_preset_metadata see; the tree is what Serum loads.
 _HEADER_ONLY_KEYS = frozenset({"hash"})
+
+
+def _same(a: Any, b: Any) -> bool:
+    """Equal and of the same types all the way down: ``10 == 10.0`` in Python
+    but they are different CBOR."""
+    if type(a) is not type(b):
+        return False
+    if isinstance(a, dict):
+        return a.keys() == b.keys() and all(_same(a[k], b[k]) for k in a)
+    if isinstance(a, (list, tuple)):
+        return len(a) == len(b) and all(map(_same, a, b))
+    return a == b
+
+
+def _shared_mismatches(header: dict, tree: dict) -> list:
+    return sorted(k for k in header
+                  if k in tree and k not in _HEADER_ONLY_KEYS
+                  and not _same(header[k], tree[k]))
+
+
+def set_preset_metadata(header: dict, tree: dict, **fields: Any) -> None:
+    """Set metadata fields in both the header and the tree, in place.
+
+    ``set_preset_metadata(header, tree, presetName="Dark Pad", tags=["Pad"])``.
+    Each field is set in the header, and in the tree too when the tree has
+    that key at its top level, which keeps :func:`encode_preset`'s
+    consistency check satisfied.
+    """
+    for key, value in fields.items():
+        if key in _HEADER_ONLY_KEYS:
+            raise ValueError(f"{key!r} is computed on write and can't be set")
+        header[key] = value
+        if key in tree:
+            tree[key] = value
 
 
 def encode_preset(header: dict, tree: dict) -> bytes:
     """Build ``.SerumPreset`` bytes from a header and a preset-shaped tree.
 
     ``header`` is typically the one :func:`decode_preset_bytes` returned, with
-    any edits (``presetName``, ``tags`` …). The header is the source of truth
-    for metadata: any key it shares with the tree's top level (``presetName``,
-    ``tags``, ``presetAuthor`` …) is written into the tree too. Neither
-    argument is modified.
+    any edits. Metadata such as ``presetName`` and ``tags`` lives in both the
+    header and the tree's top level; the two must agree (same values and
+    types), or this raises ``ValueError`` naming the keys, rather than
+    silently keeping one side. Use :func:`set_preset_metadata` to edit both.
+    Neither argument is modified.
 
     ``hash`` is recomputed as the MD5 of the compressed CBOR, the rule
     observed in the Serum 2.1.4 test preset; whether Serum checks it on load
     is untested. The Zstd stream differs from Serum's (its compressor
     settings are unknown), so the file as a whole is not byte-identical.
 
-    Raises ``TypeError`` if ``header`` or ``tree`` is not a dict or holds a
-    value that can't be encoded, and ``ValueError`` if ``fileType`` is not
-    ``"SerumPreset"`` or the header holds NaN or infinity.
+    Raises ``TypeError`` if ``header`` or ``tree`` is not a dict, has a
+    non-string key, or holds a value that can't be encoded; ``ValueError``
+    if ``fileType`` is not ``"SerumPreset"``, header and tree disagree, or
+    the header holds NaN or infinity.
     """
     if not isinstance(header, dict):
         raise TypeError(f"header must be a dict, got {type(header).__name__}")
     if not isinstance(tree, dict):
         raise TypeError(f"tree must be a dict, got {type(tree).__name__}")
+    if not all(type(k) is str for k in header):
+        raise TypeError("header keys must be str")
     if header.get("fileType") != "SerumPreset":
         raise ValueError(
             f"header fileType must be 'SerumPreset', got {header.get('fileType')!r}"
         )
-    shared = {k: v for k, v in header.items()
-              if k in tree and k not in _HEADER_ONLY_KEYS}
-    if shared:
-        tree = {**tree, **shared}
+    mismatched = _shared_mismatches(header, tree)
+    if mismatched:
+        raise ValueError(
+            "header and tree disagree on " + ", ".join(map(repr, mismatched))
+            + "; set both (set_preset_metadata does this)"
+        )
     cbor = encode_cbor(tree, sort_keys=True)
     compressed = zstandard.ZstdCompressor().compress(cbor)
     header = dict(header)
     header["hash"] = hashlib.md5(compressed, usedforsecurity=False).hexdigest()
-    if all(type(k) is str for k in header):
-        header = dict(sorted(header.items()))   # Serum's header is sorted too
+    header = dict(sorted(header.items()))   # Serum's header is sorted too
     return wrap_xferjson_precompressed(
         header, compressed,
         uncompressed_size=len(cbor),
@@ -231,17 +286,32 @@ def encode_preset(header: dict, tree: dict) -> bytes:
 def write_preset_file(path: PathLike, header: dict, tree: dict) -> None:
     """Write a ``.SerumPreset`` to disk (see :func:`encode_preset`).
 
-    The file is encoded in full first, then written to a temporary file in the
-    same folder and moved into place, so a failure never leaves a partial
-    preset at ``path``.
+    The preset is encoded in full, written to a uniquely named temporary file
+    in the same folder, and moved into place, so a failure (or another thread
+    writing the same path) never leaves a partial preset at ``path``. If
+    ``path`` is a symlink, the file it points to is replaced. An existing
+    file keeps its permission bits; a new one gets the usual umask-based
+    mode. Moving into place replaces the file rather than rewriting it, so
+    other hard links to it keep the old contents. On Windows the move fails
+    with ``PermissionError`` while another program holds the file open.
     """
     data = encode_preset(header, tree)
-    path = os.fspath(path)
-    tmp = f"{path}.tmp-{os.getpid()}"
+    target = os.path.realpath(_fspath(path))
+    folder, name = os.path.split(target)
+    # Dot-prefixed with a non-preset suffix, so a preset browser scanning the
+    # folder while it exists doesn't list it.
+    tmp = os.path.join(folder, f".{name}.{uuid.uuid4().hex}.tmp")
     try:
-        with open(tmp, "wb") as f:
+        mode = stat.S_IMODE(os.stat(target).st_mode)
+    except FileNotFoundError:
+        mode = None
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0), 0o666)
+    try:
+        with os.fdopen(fd, "wb") as f:
             f.write(data)
-        os.replace(tmp, path)
+        if mode is not None:
+            os.chmod(tmp, mode)
+        os.replace(tmp, target)
     except BaseException:
         try:
             os.unlink(tmp)

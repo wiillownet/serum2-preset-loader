@@ -93,11 +93,13 @@ Linux).
 ## Reading and writing presets
 
 ```python
-from serum2_preset_loader import decode_preset_file, write_preset_file
+from serum2_preset_loader import (
+    decode_preset_file, set_preset_metadata, write_preset_file,
+)
 
 header, tree = decode_preset_file("My Preset.SerumPreset")
 tree["VoiceFilter0"]["plainParams"]["kParamFreq"] = 0.25
-header["presetName"] = "My Preset (darker)"
+set_preset_metadata(header, tree, presetName="My Preset (darker)")
 write_preset_file("My Preset (darker).SerumPreset", header, tree)
 ```
 
@@ -108,9 +110,12 @@ Values are not all the 0–1 range a DAW sees (envelope curves are stored as
 `50.0`, filter types as names like `"MgL6"`). Which fields exist and what they
 mean is still being mapped; the format is reverse-engineered.
 
-The header is the source of truth for metadata: keys it shares with the tree
-(`presetName`, `tags`, `presetAuthor`, …) are copied into the tree on write,
-and its `hash` is recomputed. The encoder keeps Serum's float widths (32-bit
+Metadata (`presetName`, `tags`, `presetAuthor`, …) lives in both the header and
+the tree's top level. `write_preset_file` raises `ValueError` if the two
+disagree rather than silently keeping one; `set_preset_metadata` sets a field
+in both. The header's `hash` is recomputed on write, and the file is written
+to a temporary file and moved into place, so a failed or concurrent write
+never leaves a partial preset. The encoder keeps Serum's float widths (32-bit
 where the value fits, 64-bit otherwise) and its alphabetical key order, so the
 unedited test preset round-trips to identical CBOR. The Zstd stream around it
 differs from Serum's, so files are not byte-identical overall.

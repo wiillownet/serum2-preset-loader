@@ -10,6 +10,7 @@ from .codec import (
     decode_preset_file,
     encode_cbor,
     encode_preset,
+    set_preset_metadata,
     write_preset_file,
 )
 from .converter import (
@@ -39,6 +40,7 @@ __all__ = [
     "decode_preset_bytes",
     "decode_preset_file",
     "encode_preset",
+    "set_preset_metadata",
     "write_preset_file",
     "encode_cbor",
     "convert_preset_bytes",
