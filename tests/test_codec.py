@@ -380,7 +380,7 @@ def test_readme_examples_run(tmp_path):
     """The README's two code examples, run against the fixture."""
     import re
     readme = (Path(__file__).parent.parent / "README.md").read_text()
-    section = readme[readme.index("## Reading and writing presets"):readme.index("## Targeting a different Serum build")]
+    section = readme[readme.index("## Reading and writing presets"):readme.index("## Parameters")]
     blocks = re.findall(r"```python\n(.*?)```", section, re.S)
     assert len(blocks) == 2
     src = FIXTURE.read_bytes()

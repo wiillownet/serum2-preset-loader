@@ -169,6 +169,19 @@ def test_set_keeps_other_fields(preset):
     assert after == {**before, "kParamReso": 50.0}
 
 
+def test_readme_example_runs(tmp_path, monkeypatch):
+    import re
+    readme = (Path(__file__).parent.parent / "README.md").read_text(encoding="utf-8")
+    section = readme[readme.index("## Parameters"):readme.index("## Targeting a different Serum build")]
+    (block,) = re.findall(r"```python\n(.*?)```", section, re.S)
+    (tmp_path / "My Preset.SerumPreset").write_bytes(PRESET.read_bytes())
+    monkeypatch.chdir(tmp_path)
+    exec(compile(block, "README", "exec"), {})
+    _h, tree = decode_preset_file(tmp_path / "My Preset (edited).SerumPreset")
+    assert math.isclose(get_param(tree, "filter1_cutoff"), 0.25)
+    assert math.isclose(get_param(tree, "env1_attack"), 0.25, rel_tol=1e-6)
+
+
 # ─── errors ────────────────────────────────────────────────────────────────
 
 @pytest.mark.parametrize("norm", [-0.01, 1.01, math.nan, math.inf, "0.5", True])
