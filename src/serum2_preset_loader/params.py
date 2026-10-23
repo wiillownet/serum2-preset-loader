@@ -2,16 +2,21 @@
 
 Each entry maps one DAW-automatable parameter (the 0 to 1 "norm" a host sees) to
 its field in the tree from :func:`decode_preset_file` and to the value Serum
-stores there, which is in the parameter's own units (seconds, voices, frame
-index, ...). The curves were measured on Serum 2.1.5 (``productVersion``
+stores there, which is in the parameter's own units (seconds, voices, a
+wavetable position on a 1 to 256 scale, ...). The curves were measured on Serum 2.1.5 (``productVersion``
 ``"2.1.5"``, processor ``version`` 11.0) through DawDreamer: each parameter set
 to 0, 0.25, 0.5, 0.75 and 1, state saved and decoded. The formulas were fit
 to those five points and then re-checked at 21 (0, 0.05, ..., 1): every point
 matched within float32 rounding (relative error under 1e-6).
 
-Serum omits a parameter that is at its default: the field is absent, not
-written with the default value. :func:`get_param` reads an absent field as the
-default and :func:`set_param` deletes the field when given the default.
+Serum leaves a parameter that is at its default out of the file. :func:`get_param`
+reads an absent field as the default, and :func:`set_param` removes the field
+whenever the stored value equals the default's.
+
+The wavetable position parameters (``osc_*_wt_pos``) only apply while that
+oscillator is a wavetable oscillator (``kParamType`` absent or ``"kOsc_WT"``).
+On a sample, multisample, granular or spectral oscillator the field exists but
+does nothing, so both functions raise ``ValueError`` instead.
 """
 from __future__ import annotations
 
@@ -36,6 +41,7 @@ class Param:
     discrete: bool
     _to_stored: Callable[[float], float] = field(repr=False, compare=False)
     _to_norm: Callable[[float], float] = field(repr=False, compare=False)
+    wavetable_osc: str = ""  # oscillator module that must be wavetable, if any
 
     def to_stored(self, norm: float) -> float:
         """Stored value for a norm in [0, 1]."""
@@ -58,7 +64,7 @@ class Param:
 def _check_norm(name: str, norm: float) -> float:
     if isinstance(norm, bool) or not isinstance(norm, numbers.Real):
         raise ValueError(f"{name}: norm {norm!r} is not a number")
-    if math.isnan(norm) or not 0.0 <= norm <= 1.0:
+    if not 0.0 <= norm <= 1.0:   # also false for NaN; exact for huge ints
         raise ValueError(f"{name}: norm {norm!r} is outside [0, 1]")
     return float(norm)
 
@@ -91,7 +97,7 @@ for _i, (_osc, (_uni, _det, _wt)) in enumerate(
               0.5, False, lambda n: n * n, math.sqrt),
         Param(f"osc_{_osc}_wt_pos", _wt, f"{_O} WT Pos",
               (_mod, f"WTOsc{_i}", "plainParams", "kParamTablePos"),
-              0.0, False, lambda n: 1 + 255 * n, lambda s: (s - 1) / 255),
+              0.0, False, lambda n: 1 + 255 * n, lambda s: (s - 1) / 255, wavetable_osc=_mod),
     ]
 
 # Filters 1, 2: (DAW indexes of Freq, Res).
@@ -106,7 +112,7 @@ for _i, (_freq, _res) in enumerate([(205, 206), (216, 217)]):
               0.10000000149011612, False, lambda n: 100 * n, lambda s: s / 100),
     ]
 
-# Envelopes 1-4: (DAW indexes of Attack, Decay, Sustain, Release), attack default.
+# Envelopes 1 to 4: (DAW indexes of Attack, Decay, Sustain, Release), attack default.
 for _i, (_atk, _dec, _sus, _rel, _atk_default) in enumerate([
         (224, 226, 227, 228, 0.12559431791305542),   # Env 1, the amp envelope
         (232, 234, 235, 236, 0.10999999940395355),
@@ -118,7 +124,8 @@ for _i, (_atk, _dec, _sus, _rel, _atk_default) in enumerate([
               _atk_default, False, _time, _time_to_norm),
         Param(f"env{_n}_decay", _dec, f"Env {_n} Decay", (_mod, "plainParams", "kParamDecay"),
               0.5, False, _time, _time_to_norm),
-        # Stored as the norm; Serum displays the level as gain norm ** 2 in dB.
+        # Stored as the norm; Serum displays gain norm ** 2, in dB for Env 1 and
+        # as a percent for Env 2 to 4.
         Param(f"env{_n}_sustain", _sus, f"Env {_n} Sustain", (_mod, "plainParams", "kParamSustain"),
               1.0, False, lambda n: n, lambda s: s),
         Param(f"env{_n}_release", _rel, f"Env {_n} Release", (_mod, "plainParams", "kParamRelease"),
@@ -126,31 +133,52 @@ for _i, (_atk, _dec, _sus, _rel, _atk_default) in enumerate([
     ]
 
 PARAMS: Mapping[str, Param] = MappingProxyType({p.name: p for p in _TABLE})
+del _TABLE, _i, _osc, _uni, _det, _wt, _O, _mod, _freq, _res, _atk, _dec, _sus, _rel, _atk_default, _n
 
 
 def _lookup(name: str) -> Param:
     try:
         return PARAMS[name]
-    except KeyError:
+    except (KeyError, TypeError):
         raise KeyError(f"unknown parameter {name!r}; known: {', '.join(PARAMS)}") from None
 
 
-def _module(tree: dict, param: Param) -> dict:
+def _module(tree: dict, keys: Tuple[str, ...], name: str) -> dict:
     node = tree
-    for depth, key in enumerate(param.path[:-2], 1):
+    for depth, key in enumerate(keys, 1):
         if not isinstance(node, dict) or key not in node:
-            raise KeyError(f"{param.name}: preset has no module {'.'.join(param.path[:depth])}")
+            raise KeyError(f"{name}: preset has no module {'.'.join(keys[:depth])}")
         node = node[key]
     if not isinstance(node, dict):
-        raise KeyError(f"{param.name}: {'.'.join(param.path[:-2])} is not a module")
+        raise KeyError(f"{name}: {'.'.join(keys)} is not a module")
     return node
+
+
+def _plain(module: dict, name: str) -> dict:
+    """The module's plainParams as a map ("default" or missing reads as {})."""
+    plain = module.get("plainParams", {})
+    if plain == "default":
+        return {}
+    if not isinstance(plain, dict):
+        raise ValueError(f"{name}: plainParams is {plain!r}, not a map")
+    return plain
+
+
+def _check_wavetable(tree: dict, param: Param) -> None:
+    if param.wavetable_osc:
+        osc = _module(tree, (param.wavetable_osc,), param.name)
+        kind = _plain(osc, param.name).get("kParamType", "kOsc_WT")
+        if kind != "kOsc_WT":
+            raise ValueError(f"{param.name}: {param.wavetable_osc} is {kind!r}, not a "
+                             "wavetable oscillator, so its wavetable position does nothing")
 
 
 def get_param(tree: dict, name: str) -> float:
     """Return parameter ``name``'s norm; an absent field reads as the default."""
     param = _lookup(name)
-    plain = _module(tree, param).get("plainParams", {})
-    if plain == "default" or param.path[-1] not in plain:
+    plain = _plain(_module(tree, param.path[:-2], param.name), param.name)
+    _check_wavetable(tree, param)
+    if param.path[-1] not in plain:
         return param.default_norm
     return param.to_norm(plain[param.path[-1]])
 
@@ -158,21 +186,20 @@ def get_param(tree: dict, name: str) -> float:
 def set_param(tree: dict, name: str, norm: float) -> None:
     """Set parameter ``name`` to ``norm`` (0 to 1), in place.
 
-    Writes the stored value as a float, or deletes the field when it equals
-    the default's stored value, as Serum does. Raises ``ValueError`` for a
-    norm outside [0, 1] or NaN, and ``KeyError`` for an unknown name or a
-    module missing from the tree (modules are never created).
+    Writes the stored value as a float, or removes the field when it equals
+    the default's stored value (absent means default). Raises ``ValueError``
+    for a norm outside [0, 1] or NaN, a malformed ``plainParams`` or a
+    wavetable position on a non-wavetable oscillator, and ``KeyError`` for an
+    unknown name or a module missing from the tree (modules are never
+    created). Nothing is changed when it raises.
     """
     param = _lookup(name)
     stored = param.to_stored(norm)
-    module = _module(tree, param)
-    plain = module.get("plainParams", {})
-    if plain == "default":
-        plain = {}
-    if not isinstance(plain, dict):
-        raise ValueError(f"{param.name}: plainParams is {plain!r}, not a map")
-    module["plainParams"] = plain
+    module = _module(tree, param.path[:-2], param.name)
+    plain = _plain(module, param.name)
+    _check_wavetable(tree, param)
     if math.isclose(stored, param.default_stored, rel_tol=1e-9):
-        plain.pop(param.path[-1], None)
+        plain.pop(param.path[-1], None)     # no-op on "default" or a missing map
     else:
+        module["plainParams"] = plain
         plain[param.path[-1]] = stored

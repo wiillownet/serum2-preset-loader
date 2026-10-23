@@ -184,7 +184,7 @@ def test_readme_example_runs(tmp_path, monkeypatch):
 
 # ─── errors ────────────────────────────────────────────────────────────────
 
-@pytest.mark.parametrize("norm", [-0.01, 1.01, math.nan, math.inf, "0.5", True])
+@pytest.mark.parametrize("norm", [-0.01, 1.01, math.nan, math.inf, "0.5", True, 10**400, -10**400])
 def test_bad_norm_rejected(norm):
     tree = empty_tree()
     with pytest.raises(ValueError, match="filter1_cutoff"):
@@ -192,11 +192,68 @@ def test_bad_norm_rejected(norm):
     assert tree == empty_tree()
 
 
-def test_unknown_name():
+@pytest.mark.parametrize("name", ["no_such_param", ["no_such_param"]])
+def test_unknown_name(name):
     with pytest.raises(KeyError, match="no_such_param"):
-        set_param(empty_tree(), "no_such_param", 0.5)
+        set_param(empty_tree(), name, 0.5)
     with pytest.raises(KeyError, match="no_such_param"):
-        get_param(empty_tree(), "no_such_param")
+        get_param(empty_tree(), name)
+
+
+@pytest.mark.parametrize("plain", [None, 5, 1.5, [], ["kParamDecay"], "", "kParamDecayX", b"kParamDecay"])
+def test_malformed_plainparams_rejected(plain):
+    tree = empty_tree()
+    tree["Env0"]["plainParams"] = plain
+    with pytest.raises(ValueError, match="not a map"):
+        get_param(tree, "env1_decay")
+    for norm in (0.5, 0.75):    # default and non-default
+        with pytest.raises(ValueError, match="not a map"):
+            set_param(tree, "env1_decay", norm)
+    assert tree["Env0"]["plainParams"] == plain
+
+
+def test_module_that_is_not_a_map():
+    tree = empty_tree()
+    tree["Env0"] = [1, 2]
+    with pytest.raises(KeyError, match="Env0"):
+        get_param(tree, "env1_decay")
+    with pytest.raises(KeyError, match="Env0"):
+        set_param(tree, "env1_decay", 0.75)
+    assert tree["Env0"] == [1, 2]
+
+
+@pytest.mark.parametrize("plain", ["default", None])
+def test_set_default_changes_nothing(plain):
+    tree = empty_tree()
+    if plain is None:
+        del tree["Env0"]["plainParams"]
+    else:
+        tree["Env0"]["plainParams"] = plain
+    before = copy.deepcopy(tree)
+    set_param(tree, "env1_decay", PARAMS["env1_decay"].default_norm)
+    assert tree == before
+
+
+@pytest.mark.parametrize("kind", ["kOsc_MultiSample", "kOsc_Sample", "kOsc_Granular", "kOsc_Spectral"])
+def test_wt_pos_rejected_on_non_wavetable_oscillator(kind):
+    tree = empty_tree()
+    tree["Oscillator1"]["plainParams"]["kParamType"] = kind
+    before = copy.deepcopy(tree)
+    with pytest.raises(ValueError, match=f"Oscillator1 is '{kind}'"):
+        get_param(tree, "osc_b_wt_pos")
+    with pytest.raises(ValueError, match="not a wavetable oscillator"):
+        set_param(tree, "osc_b_wt_pos", 0.5)
+    assert tree == before
+    set_param(tree, "osc_b_unison", 0.5)        # the oscillator's other params still work
+    assert get_param(tree, "osc_a_wt_pos") == 0.0   # and other oscillators are unaffected
+
+
+@pytest.mark.parametrize("plain", [{}, "default", {"kParamType": "kOsc_WT"}])
+def test_wt_pos_allowed_on_wavetable_oscillator(plain):
+    tree = empty_tree()
+    tree["Oscillator0"]["plainParams"] = plain
+    set_param(tree, "osc_a_wt_pos", 0.5)
+    assert get_param(tree, "osc_a_wt_pos") == 0.5
 
 
 def test_missing_module_named_and_not_created():

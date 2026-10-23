@@ -10,7 +10,8 @@ VST3 state blobs that [DawDreamer](https://github.com/DBraun/DawDreamer) can
 load into Serum 2 — so you can render presets to audio without opening the
 Serum GUI — and decode, edit and re-encode the preset files themselves.
 
-Tested against Serum 2.1.4 on macOS.
+Tested against Serum 2.1.4 on macOS. Its output also loads in Serum 2.1.5
+(checked through DawDreamer), where the parameter table below was measured.
 
 For a ready-made renderer built on top of this library, see
 [serum-render](https://github.com/wiillownet/serum-render).
@@ -113,7 +114,7 @@ state_blob = convert_preset_tree(tree)   # same output as convert_preset_bytes
 
 `set_param` and `get_param` work in the 0 to 1 range a DAW knob uses and convert
 to the value Serum stores, which is in each parameter's own units (seconds,
-voices, frame index, ...):
+voices, a wavetable position on a 1 to 256 scale, ...):
 
 ```python
 from serum2_preset_loader import decode_preset_file, set_param, write_preset_file
@@ -128,10 +129,12 @@ Only 29 parameters are covered so far (`PARAMS` lists them): unison, detune
 and wavetable position for oscillators A, B and C (`osc_a_unison`, ...),
 cutoff and resonance for filters 1 and 2 (`filter1_cutoff`, ...), and attack,
 decay, sustain and release for Env 1 (the amp envelope) through Env 4
-(`env1_attack`, ...). Each curve was measured on Serum 2.1.5 at 5 points (0,
-0.25, 0.5, 0.75, 1) and re-checked at 21. Serum leaves a parameter out of the
+(`env1_attack`, ...). Each curve was measured on Serum 2.1.5 at 21 points (0,
+0.05, ..., 1); the tests check every one. Serum leaves a parameter out of the
 file when it's at its default, so `get_param` reads a missing field as the
-default and `set_param` removes the field when you set the default.
+default and `set_param` removes the field when you set the default. Wavetable
+position only applies to a wavetable oscillator: on a sample, multisample,
+granular or spectral oscillator both functions raise `ValueError`.
 
 ## Targeting a different Serum build
 
@@ -305,7 +308,7 @@ attempts and the probes used to diff the two formats — see
 
 ## Caveats
 
-- Targets Serum 2.1.4. If a future Serum version changes the schema, the
+- The converter targets Serum 2.1.4 (the parameter table was measured on 2.1.5). If a future Serum version changes the schema, the
   converter may need new mappings; `docs/DERIVATION.md` describes how to
   re-derive them.
 - Per-instance audio randomization (unison detune phase, sample start, etc.)
