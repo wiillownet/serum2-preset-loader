@@ -27,6 +27,22 @@
 
 **Alternatives considered:** Streaming decompression with a read cap (`stream_reader`), which bounds memory without trusting the frame but copies the output once more; checking the declared size first gets the same bound with the existing single allocation. Rejecting tags 28/29 at decode via `semantic_decoders`, which cbor2 5.x (still allowed by the `>=5.4` floor) does not support; a post-decode identity walk works on every version.
 
+## [2026-10-22] Grow into a two-way codec instead of starting a separate package
+
+**Decision:** The package now reads and writes `.SerumPreset` files (`decode_preset_*`, `encode_preset`, `write_preset_file`) and converts edited trees in memory (`convert_preset_tree`), alongside the existing preset-to-state converter. Released as 0.2.0, an API addition.
+
+**Reason:** A preset generator needs to edit presets and render the variants. The envelope, hash and CBOR-shape knowledge already lives here and serum-render already depends on it; a second package would duplicate reverse-engineered format knowledge that has to change in step whenever Serum does.
+
+**Alternatives considered:** A separate codec package, cleaner in name but two packages tracking one undocumented format. KennethWussmann's serum-preset-packager, which works through JSON and leaves the same field meanings unknown.
+
+## [2026-10-22] Encode CBOR with Serum's float widths and key order; leave the converter on cbor2
+
+**Decision:** `encode_cbor` writes each float as 32-bit when it round-trips exactly and 64-bit otherwise (never 16-bit, which the test preset never uses, even for 0.0 or 0.5), and `encode_preset` sorts map and header keys alphabetically, as every map in the test preset is. Together they reproduce the test preset's CBOR byte-for-byte. `convert_preset_*` keeps using `cbor2.dumps` (finite floats as 64-bit).
+
+**Reason:** cbor2 writes finite floats as 64-bit by default, changing every float in a written preset (7823 → 8151 bytes on the fixture), and insertion order would put a newly added parameter where Serum wouldn't. Serum's `setState` already accepts the converter's 64-bit output, and switching would change converted bytes that serum-render users may have pinned against, for no gain.
+
+**Alternatives considered:** Using `encode_cbor` in the converter too. Revisit if Serum ever rejects 64-bit floats in state.
+
 ## [2026-10-23] Count CBOR containers before decoding; require string keys
 
 **Decision:** Before `cbor2.loads`, a linear scan of CBOR item heads counts maps and arrays and rejects more than 1M, skipping runs of same-width floats in one step and stopping after 10M steps. After decoding, every map must have string keys. Any exception from `cbor2.loads` becomes `ValueError`.
@@ -43,3 +59,10 @@
 
 **Alternatives considered:** Raising the floor to `cbor2>=6`, which fixes both without code but drops support for environments pinned to cbor2 5. Catching `RecursionError` in the converter, which fixes only one of the two and leaves non-plain values reaching `cbor2.dumps`.
 
+## [2026-10-23] Header and tree metadata must agree; writes are unique-temp and atomic
+
+**Decision:** `encode_preset` raises `ValueError` naming any key the header and the tree's top level both hold with different values or types, replacing the earlier copy-header-into-tree behaviour; `set_preset_metadata` sets a field in both. `write_preset_file` writes through a temp file with a random name in the target's folder (`O_EXCL`), keeps an existing file's permission bits, follows symlinks, and accepts `bytes` paths; integer paths are rejected.
+
+**Reason:** Copying the header over the tree silently discarded tree-only edits and could change a type Serum wrote (int `10` over float `10.0`); in the test preset every shared key already agrees, so the check costs nothing on unedited files. The per-process temp name let two threads share one temp file, and the second audit reproduced a "successful" write leaving a corrupt preset. `mkstemp` was not used because it creates files as 0600 and there is no thread-safe way to read the umask.
+
+**Alternatives considered:** Header wins or tree wins (both silently drop an edit on the other side). Adding the thread id to the temp name, which fixes threads but not other processes reusing a pid.

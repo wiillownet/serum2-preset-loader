@@ -5,9 +5,10 @@
 [![tests](https://github.com/wiillownet/serum2-preset-loader/actions/workflows/tests.yml/badge.svg)](https://github.com/wiillownet/serum2-preset-loader/actions/workflows/tests.yml)
 [![license](https://img.shields.io/pypi/l/serum2-preset-loader)](LICENSE)
 
-Convert `.SerumPreset` files into VST3 state blobs that
-[DawDreamer](https://github.com/DBraun/DawDreamer) can load into Serum 2 — so
-you can render presets to audio without opening the Serum GUI.
+Read, write and convert Serum 2 `.SerumPreset` files. Convert presets into
+VST3 state blobs that [DawDreamer](https://github.com/DBraun/DawDreamer) can
+load into Serum 2 — so you can render presets to audio without opening the
+Serum GUI — and decode, edit and re-encode the preset files themselves.
 
 Tested against Serum 2.1.4 on macOS.
 
@@ -62,6 +63,63 @@ meta = read_preset_metadata("My Preset.SerumPreset")
 print(meta["presetName"], meta["presetAuthor"], meta["tags"])
 ```
 
+## Reading and writing presets
+
+```python
+from serum2_preset_loader import (
+    decode_preset_file, set_preset_metadata, write_preset_file,
+)
+
+header, tree = decode_preset_file("My Preset.SerumPreset")
+tree["VoiceFilter0"]["plainParams"]["kParamFreq"] = 0.25
+set_preset_metadata(header, tree, presetName="My Preset (darker)")
+write_preset_file("My Preset (darker).SerumPreset", header, tree)
+```
+
+`header` is the JSON metadata; `tree` is the decoded CBOR, keyed by module
+(`Oscillator0`, `Env0`, `VoiceFilter0`, `ModSlot0`, …). Edited modules hold a
+`plainParams` map of parameter name to value; untouched ones hold an empty map.
+Values are not all the 0–1 range a DAW sees (envelope curves are stored as
+`50.0`, filter types as names like `"MgL6"`). Which fields exist and what they
+mean is still being mapped; the format is reverse-engineered.
+
+Metadata (`presetName`, `tags`, `presetAuthor`, …) lives in both the header and
+the tree's top level. `write_preset_file` raises `ValueError` if the two
+disagree rather than silently keeping one; `set_preset_metadata` sets a field
+in both. The header's `hash` is recomputed on write, and the file is written
+to a temporary file and moved into place, so a failed or concurrent write
+never leaves a partial preset. The encoder keeps Serum's float widths (32-bit
+where the value fits, 64-bit otherwise) and its alphabetical key order, so the
+unedited test preset round-trips to identical CBOR. The Zstd stream around it
+differs from Serum's, so files are not byte-identical overall.
+
+**Not yet verified:** files written this way have not been loaded in Serum 2
+itself. Two open questions: whether Serum writes non-ASCII preset names as raw
+UTF-8 (this writes `\u` escapes), and whether it accepts an `int` where it
+wrote a float (write `1.0`, not `1`, when editing).
+
+### Rendering an edited preset without writing a file
+
+```python
+from serum2_preset_loader import decode_preset_file, convert_preset_tree
+
+_header, tree = decode_preset_file("My Preset.SerumPreset")
+tree["Oscillator0"]["WTOsc0"]["plainParams"]["kParamTablePos"] = 20.0
+state_blob = convert_preset_tree(tree)   # same output as convert_preset_bytes
+```
+
+## Targeting a different Serum build
+
+The version markers Serum embeds in the processor-state CBOR are exposed as
+module attributes you can override before calling the converter:
+
+```python
+from serum2_preset_loader import converter
+converter.PROCESSOR_PRODUCT_VERSION = "2.2.0"
+converter.PROCESSOR_FORMAT_VERSION = 11.0
+# converter.SUPPORTED_XFERJSON_VERSION = 3   # if Serum bumps the wrapper
+```
+
 ## Untrusted files
 
 Every corrupt, truncated or hostile input raises `ValueError` (or `OSError`
@@ -88,18 +146,6 @@ roughly 7 GB in one process. If you run conversions in a worker pool over
 files you don't trust, also set a per-worker memory limit (for example
 `resource.setrlimit(resource.RLIMIT_AS, ...)` in the worker initializer on
 Linux).
-
-## Targeting a different Serum build
-
-The version markers Serum embeds in the processor-state CBOR are exposed as
-module attributes you can override before calling the converter:
-
-```python
-from serum2_preset_loader import converter
-converter.PROCESSOR_PRODUCT_VERSION = "2.2.0"
-converter.PROCESSOR_FORMAT_VERSION = 11.0
-# converter.SUPPORTED_XFERJSON_VERSION = 3   # if Serum bumps the wrapper
-```
 
 ## How it works
 
@@ -171,8 +217,10 @@ The two CBORs are mostly identical, but they differ in three places:
 
 #### a) `plainParams` shape
 
-The preset uses a `"default"` *string* sentinel for any module whose params are
-all at their factory defaults; the processor uses an empty map.
+A preset marks a module whose params are all at their factory defaults either
+with a `"default"` *string* sentinel or with an empty map (the 2.1.4 test
+preset uses only empty maps); the processor always uses an empty map, so the
+converter expands the sentinel.
 
 ```
 preset:    "Arp0":         {"plainParams": "default"}

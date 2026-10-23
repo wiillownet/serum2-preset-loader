@@ -1,12 +1,25 @@
-"""Convert .SerumPreset files into VST3 state blobs that DawDreamer can load."""
+"""Read, write and convert Serum 2 .SerumPreset files.
+
+Converts presets into VST3 state blobs that DawDreamer can load, and decodes
+and encodes the preset files themselves.
+"""
 from importlib.metadata import PackageNotFoundError, version as _pkg_version
 
+from .codec import (
+    decode_preset_bytes,
+    decode_preset_file,
+    encode_cbor,
+    encode_preset,
+    set_preset_metadata,
+    write_preset_file,
+)
 from .converter import (
     PROCESSOR_FORMAT_VERSION,
     PROCESSOR_PRODUCT_VERSION,
     SUPPORTED_XFERJSON_VERSION,
     convert_preset_bytes,
     convert_preset_file,
+    convert_preset_tree,
     preset_cbor_to_processor_cbor,
     read_preset_metadata,
 )
@@ -24,8 +37,15 @@ except PackageNotFoundError:
     __version__ = "0+unknown"
 
 __all__ = [
+    "decode_preset_bytes",
+    "decode_preset_file",
+    "encode_preset",
+    "set_preset_metadata",
+    "write_preset_file",
+    "encode_cbor",
     "convert_preset_bytes",
     "convert_preset_file",
+    "convert_preset_tree",
     "preset_cbor_to_processor_cbor",
     "read_preset_metadata",
     "build_juce_vst3_state",

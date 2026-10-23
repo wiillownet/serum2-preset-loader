@@ -306,7 +306,9 @@ def wrap_xferjson_precompressed(
     version: int = 2,
 ) -> bytes:
     """Emit the XferJson envelope from an already-Zstd-compressed CBOR payload."""
-    meta_json = json.dumps(metadata, separators=(",", ":")).encode("utf-8")
+    # allow_nan=False: Python would otherwise write NaN/Infinity, which is
+    # not JSON and which a strict reader (possibly Serum) rejects.
+    meta_json = json.dumps(metadata, separators=(",", ":"), allow_nan=False).encode("utf-8")
     return (
         XFER_MAGIC
         + struct.pack("<Q", len(meta_json))
