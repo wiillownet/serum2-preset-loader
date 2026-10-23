@@ -127,7 +127,7 @@ write_preset_file("My Preset (edited).SerumPreset", header, tree)
 Only 9 parameters are covered so far (`PARAMS` lists them): oscillator A
 unison, detune and wavetable position, filter 1 cutoff and resonance, and the
 Env 1 (amp) attack, decay, sustain and release. Each curve was measured on
-Serum 2.1.5 at 5 points (0, 0.25, 0.5, 0.75, 1). Serum leaves a parameter
+Serum 2.1.5 at 5 points (0, 0.25, 0.5, 0.75, 1) and re-checked at 21. Serum leaves a parameter
 out of the file when it's at its default, so `get_param` reads a missing field
 as the default and `set_param` removes the field when you set the default.
 

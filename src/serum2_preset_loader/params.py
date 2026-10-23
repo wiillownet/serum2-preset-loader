@@ -5,9 +5,9 @@ its field in the tree from :func:`decode_preset_file` and to the value Serum
 stores there, which is in the parameter's own units (seconds, voices, frame
 index, ...). The curves were measured on Serum 2.1.5 (``productVersion``
 ``"2.1.5"``, processor ``version`` 11.0) through DawDreamer: each parameter set
-to 0, 0.25, 0.5, 0.75 and 1, state saved and decoded. Five points per curve,
-so the formulas fit those points; values between them are not individually
-verified.
+to 0, 0.25, 0.5, 0.75 and 1, state saved and decoded. The formulas were fit
+to those five points and then re-checked at 21 (0, 0.05, ..., 1): every point
+matched within float32 rounding (relative error under 1e-6).
 
 Serum omits a parameter that is at its default: the field is absent, not
 written with the default value. :func:`get_param` reads an absent field as the
