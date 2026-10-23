@@ -47,7 +47,7 @@ def test_plain_cbor2_does_not_roundtrip(preset_bytes):
 
 @pytest.mark.parametrize("value", [
     0, 1, 23, 24, 255, 256, 65535, 65536, 2**32 - 1, 2**32, 2**64 - 1,
-    -1, -24, -25, -256, -(2**63),
+    -1, -24, -25, -256, -(2**63), -(2**64), 2**64 - 1,
     True, False, None,
     "", "kParamFreq", "naïve ✓", b"", b"\x00\xff",
     [], [1, "a", None], {}, {"b": 1, "a": ["x", {"c": False}]},
@@ -311,12 +311,12 @@ def test_non_string_keys_are_rejected_on_write(preset_bytes, make, match):
 
 @pytest.mark.parametrize("header, tree", [([], {}), (None, {}), ({"fileType": "SerumPreset"}, [1])])
 def test_encode_preset_rejects_non_dicts(header, tree):
-    with pytest.raises(TypeError):
+    with pytest.raises(TypeError, match="must be a dict"):
         encode_preset(header, tree)
 
 
 def test_convert_tree_rejects_non_dict():
-    with pytest.raises(TypeError):
+    with pytest.raises(TypeError, match="preset tree must be a dict"):
         convert_preset_tree([1])
 
 
@@ -451,9 +451,15 @@ def test_existing_file_keeps_its_mode(preset_bytes, tmp_path):
     header, tree = decode_preset_bytes(preset_bytes)
     path = tmp_path / "private.SerumPreset"
     path.write_bytes(b"old")
-    os.chmod(path, 0o600)
-    write_preset_file(path, header, tree)
-    assert os.stat(path).st_mode & 0o777 == 0o600
+    # Pin the umask so a newly created file would be 0o644: then 0o640 can
+    # only come from copying the old file's mode, whatever the runner's umask.
+    os.chmod(path, 0o640)
+    old_umask = os.umask(0o022)
+    try:
+        write_preset_file(path, header, tree)
+    finally:
+        os.umask(old_umask)
+    assert os.stat(path).st_mode & 0o777 == 0o640
 
 
 @pytest.mark.skipif(os.name != "posix", reason="POSIX umask")
@@ -490,3 +496,45 @@ def test_failed_move_raises_and_cleans_up(preset_bytes, tmp_path):
     with pytest.raises(OSError):
         write_preset_file(folder, header, tree)
     assert sorted(p.name for p in tmp_path.iterdir()) == ["a folder.SerumPreset"]
+
+
+
+# ─── round 3: gaps found by the third audit ────────────────────────────────
+
+def test_written_header_keys_are_sorted(preset_bytes):
+    """The fixture header is already sorted, so only a new key shows whether
+    encode_preset sorts it."""
+    header, tree = decode_preset_bytes(preset_bytes)
+    set_preset_metadata(header, tree, aaaFirst="x", zzzLast="y")
+    blob = encode_preset(header, tree)
+    n = struct.unpack("<Q", blob[9:17])[0]
+    import json
+    keys = list(json.loads(blob[17:17 + n]))
+    assert keys == sorted(keys) and keys[0] == "aaaFirst" and keys[-1] == "zzzLast"
+
+
+def test_interrupted_write_cleans_up_temp_file(preset_bytes, tmp_path, monkeypatch):
+    """KeyboardInterrupt is not an Exception; the cleanup must still run."""
+    from serum2_preset_loader import codec
+
+    header, tree = decode_preset_bytes(preset_bytes)
+    path = tmp_path / "x.SerumPreset"
+
+    def interrupted(src, dst):
+        raise KeyboardInterrupt
+    monkeypatch.setattr(codec.os, "replace", interrupted)
+    with pytest.raises(KeyboardInterrupt):
+        write_preset_file(path, header, tree)
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_public_api():
+    import serum2_preset_loader as pkg
+    expected = {
+        "decode_preset_bytes", "decode_preset_file", "encode_preset",
+        "write_preset_file", "set_preset_metadata", "encode_cbor",
+        "convert_preset_bytes", "convert_preset_file", "convert_preset_tree",
+        "preset_cbor_to_processor_cbor", "read_preset_metadata",
+    }
+    assert expected <= set(pkg.__all__)
+    assert all(hasattr(pkg, name) for name in pkg.__all__)

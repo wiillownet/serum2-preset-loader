@@ -1,8 +1,9 @@
 """Translate the CBOR inside a .SerumPreset into Serum 2's processor-state shape.
 
 A .SerumPreset's CBOR is a "delta from defaults" structure: untouched modules
-have ``plainParams: "default"`` and the file carries extra UI / library /
-metadata fields. Serum 2's runtime processor state CBOR (what Serum writes via
+have either ``plainParams: "default"`` or an empty map (the 2.1.4 test preset
+uses only empty maps), and the file carries extra UI / library / metadata
+fields. Serum 2's runtime processor state CBOR (what Serum writes via
 VST3 IComponent::getState) uses fully expanded ``plainParams: {}`` for unchanged
 modules, omits the UI/metadata, and adds a couple of processor-only fields.
 
