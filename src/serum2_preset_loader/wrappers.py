@@ -31,11 +31,16 @@ XFER_MAGIC = b"XferJson\x00"
 # hundred MB.
 _MAX_HEADER_JSON_SIZE = 16 << 20       # 16 MiB
 _MAX_CBOR_SIZE = 1 << 30               # 1 GiB
-# Maps and arrays in one payload. Each costs ~60+ bytes once decoded but can
-# be 1 byte of CBOR, so 4M empty lists (201 bytes compressed) decoded to
-# 566 MiB. The test preset holds ~170 maps; sample data lives in a few long
+# Maps and arrays in one payload. Each costs ~70 bytes once decoded but can
+# be 1 byte of CBOR: 4M empty lists, a 201-byte file, decoded to ~300 MiB,
+# and converting it took ~570 MiB and ~9 s with the tree checks. The test
+# preset holds 425 (403 maps, 22 arrays); sample data lives in a few long
 # lists, so real presets sit far below this.
 _MAX_CBOR_CONTAINERS = 1_000_000
+# Nesting depth after decoding. The test preset nests 4 deep. cbor2 6 stops
+# at 400, but cbor2 5 doesn't limit it, and the converter's recursive copy
+# then raised RecursionError at ~500 levels on Python 3.9.
+_MAX_CBOR_DEPTH = 64
 # Loop iterations the pre-scan may spend. Runs of same-width floats cost one
 # iteration each, so real presets take a few thousand; only adversarial
 # input (e.g. alternating float widths) gets near this, and it bounds the
@@ -127,6 +132,13 @@ def unwrap_xferjson(
 
 
 _CBOR_CONTAINERS = (dict, list)
+# Every value in a Serum preset is one of these. cbor2 can also return tagged
+# values (datetime, Decimal, CBORTag, ...), `undefined`, simple values, and on
+# cbor2 5 a stray "break" byte as a `break_marker` object; none survive
+# conversion (cbor2.dumps rejects some, raising a non-ValueError), and Serum
+# writes none of them.
+_CBOR_SCALARS = frozenset({str, int, float, bool, type(None), bytes})
+_CBOR_VALUE_TYPES = _CBOR_SCALARS | {dict, list}
 
 
 def _loads_cbor_tree(cbor_bytes: bytes) -> dict:
@@ -138,7 +150,8 @@ def _loads_cbor_tree(cbor_bytes: bytes) -> dict:
     map keys), ``MemoryError`` (a huge declared string length) or
     ``RecursionError``. Before decoding, the payload's maps and arrays are
     counted (see ``_MAX_CBOR_CONTAINERS``). After decoding, the tree must be a
-    map whose maps all have string keys, with no container appearing twice:
+    map no deeper than ``_MAX_CBOR_DEPTH``, whose maps all have string keys
+    and whose values are all plain types, with no container appearing twice:
     cbor2 decodes CBOR shared references (tags 28/29) into aliased objects,
     which lets a few hundred bytes describe a cyclic tree or one with 2**40
     nodes. Serum writes none of these.
@@ -230,9 +243,14 @@ def _check_cbor_container_count(cbor: bytes) -> None:
 
 def _check_tree(tree: dict) -> None:
     seen: set[int] = set()
-    stack: list = [tree]
+    stack: list = [(tree, 1)]
     while stack:
-        node = stack.pop()
+        node, depth = stack.pop()
+        if depth > _MAX_CBOR_DEPTH:
+            raise ValueError(
+                f"CBOR payload nests deeper than {_MAX_CBOR_DEPTH} levels "
+                "(corrupt or not a Serum preset)"
+            )
         if id(node) in seen:
             raise ValueError(
                 "CBOR payload contains a shared or self-referencing value "
@@ -248,12 +266,19 @@ def _check_tree(tree: dict) -> None:
                 )
             children = node.values()
         else:
-            # set(map(type, ...)) runs in C; lists of scalars (sample data,
-            # tens of millions of floats) are skipped without a Python loop.
-            if set(map(type, node)).isdisjoint(_CBOR_CONTAINERS):
-                continue
             children = node
-        stack.extend(c for c in children if isinstance(c, _CBOR_CONTAINERS))
+        # set(map(type, ...)) runs in C, so a list of tens of millions of
+        # floats (sample data) is checked and skipped without a Python loop.
+        types = set(map(type, children))
+        if not types <= _CBOR_VALUE_TYPES:
+            bad = sorted(t.__name__ for t in types - _CBOR_VALUE_TYPES)[0]
+            raise ValueError(
+                f"CBOR payload holds a {bad} value; Serum presets hold only "
+                "maps, arrays, strings, bytes, numbers, booleans and null"
+            )
+        if types.isdisjoint(_CBOR_CONTAINERS):
+            continue
+        stack.extend((c, depth + 1) for c in children if isinstance(c, _CBOR_CONTAINERS))
 
 
 def wrap_xferjson(metadata: dict, cbor_bytes: bytes, *, version: int = 2) -> bytes:

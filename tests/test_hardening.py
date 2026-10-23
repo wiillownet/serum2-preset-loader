@@ -114,8 +114,8 @@ def test_exponential_shared_references_are_rejected_quickly():
         convert_preset_bytes(envelope(cbor))
 
 
-def test_large_scalar_lists_are_not_walked_per_element():
-    # A sample-sized list passes the shared-reference check without error.
+def test_large_scalar_lists_pass_the_tree_check():
+    # A sample-sized list of floats is accepted by the tree check.
     tree = {"SampleOsc0": {"data": [0.5] * 1_000_000}}
     import cbor2
     assert _loads_cbor_tree(cbor2.dumps(tree)) == tree
@@ -155,7 +155,7 @@ def test_read_metadata_still_reads_fixture():
 def test_non_string_map_keys_are_a_value_error(cbor):
     """These used to reach the converter and raise AttributeError from
     key.startswith(...)."""
-    with pytest.raises(ValueError, match="non-string map key|corrupt"):
+    with pytest.raises(ValueError, match="non-string map key"):
         convert_preset_bytes(envelope(cbor))
 
 
@@ -270,3 +270,80 @@ def test_fuzzed_fixture_only_raises_value_error():
             convert_preset_bytes(bytes(b))
         except ValueError:
             pass
+
+
+
+# ─── round 3: cbor2 5 quirks, real cap values ──────────────────────────────
+
+def test_stray_break_byte_is_a_value_error():
+    """cbor2 5 decodes a lone 0xff as a break_marker value instead of
+    raising; conversion then failed with cbor2's CBOREncodeTypeError."""
+    with pytest.raises(ValueError):
+        convert_preset_bytes(envelope(b"\xa1\x61x\xff"))
+
+
+@pytest.mark.parametrize("value", [
+    pytest.param(b"\xc1\x00", id="datetime tag"),
+    pytest.param(b"\xd9\x03\xe8\x01", id="unknown tag"),
+    pytest.param(b"\xf7", id="undefined"),
+    pytest.param(b"\xf0", id="simple value"),
+])
+def test_non_plain_values_are_rejected(value):
+    with pytest.raises(ValueError, match="Serum presets hold only"):
+        _loads_cbor_tree(b"\xa1\x61x" + value)
+
+
+def test_deep_nesting_is_rejected_on_any_cbor2():
+    """cbor2 5 decodes 600 nested arrays; the converter's recursive copy
+    then raised RecursionError. cbor2 6 rejects it itself ("nesting depth");
+    either way it must be a ValueError. The boundary test below covers ours."""
+    with pytest.raises(ValueError, match="nests deeper than 64|nesting depth"):
+        convert_preset_bytes(envelope(b"\xa1\x61x" + b"\x81" * 600 + b"\x80"))
+
+
+def test_depth_cap_boundary():
+    # The top-level map is level 1, so 63 nested arrays reach level 64.
+    _loads_cbor_tree(b"\xa1\x61x" + b"\x81" * 62 + b"\x80")
+    with pytest.raises(ValueError, match="nests deeper"):
+        _loads_cbor_tree(b"\xa1\x61x" + b"\x81" * 63 + b"\x80")
+
+
+def test_fixture_is_well_inside_every_cap():
+    import cbor2
+    _meta, _v, cbor = unwrap_xferjson(FIXTURE.read_bytes())
+    tree = cbor2.loads(cbor)
+
+    def walk(o, d=1):
+        if isinstance(o, dict):
+            return 1 + sum(walk(v, d + 1)[0] for v in o.values()), max([d] + [walk(v, d + 1)[1] for v in o.values()])
+        if isinstance(o, list):
+            return 1 + sum(walk(v, d + 1)[0] for v in o), max([d] + [walk(v, d + 1)[1] for v in o])
+        return 0, d - 1
+    containers, depth = walk(tree)
+    assert containers == 425 and depth <= 5       # documented in wrappers.py
+
+
+def test_reserved_additional_info_is_rejected_by_the_scan():
+    with pytest.raises(ValueError, match="reserved additional info 28"):
+        wrappers._check_cbor_container_count(b"\x5c")
+
+
+def test_real_cbor_size_cap():
+    """Not monkeypatched: the shipped 1 GiB cap rejects one byte more."""
+    with pytest.raises(ValueError, match="exceeds the 1073741824-byte limit"):
+        unwrap_xferjson(envelope(b"\xa0", size=(1 << 30) + 1))
+
+
+def test_real_header_size_cap():
+    blob = XFER_MAGIC + struct.pack("<Q", (16 << 20) + 1) + b"{}"
+    with pytest.raises(ValueError, match="exceeds the 16777216-byte limit"):
+        unwrap_xferjson(blob)
+
+
+def test_shipped_limits():
+    """The README and decisions.md quote these; changing one is a decision."""
+    assert wrappers._MAX_HEADER_JSON_SIZE == 16 << 20
+    assert wrappers._MAX_CBOR_SIZE == 1 << 30
+    assert wrappers._MAX_CBOR_CONTAINERS == 1_000_000
+    assert wrappers._MAX_CBOR_SCAN_STEPS == 10_000_000
+    assert wrappers._MAX_CBOR_DEPTH == 64
