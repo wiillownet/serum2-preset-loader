@@ -66,3 +66,12 @@
 **Reason:** Copying the header over the tree silently discarded tree-only edits and could change a type Serum wrote (int `10` over float `10.0`); in the test preset every shared key already agrees, so the check costs nothing on unedited files. The per-process temp name let two threads share one temp file, and the second audit reproduced a "successful" write leaving a corrupt preset. `mkstemp` was not used because it creates files as 0600 and there is no thread-safe way to read the umask.
 
 **Alternatives considered:** Header wins or tree wins (both silently drop an edit on the other side). Adding the thread id to the temp name, which fixes threads but not other processes reusing a pid.
+
+## [2026-10-23] Publish to PyPI from GitHub releases with trusted publishing
+
+**Decision:** Publishing a GitHub release runs `.github/workflows/publish.yml`, which runs the tests, checks the tag equals `v` + the pyproject version, builds, and uploads through PyPI trusted publishing. Same workflow as serum-render, plus the test and tag checks.
+
+**Reason:** 0.1.4 was built and uploaded by hand, which needs build tools and a PyPI token on whichever machine does it, and nothing stops uploading a build whose version doesn't match its tag. Trusted publishing stores no token at all.
+
+**Alternatives considered:** Continuing by hand with `twine` (works, but repeats every release and needs the token). A token stored as a repository secret (simpler PyPI setup, but a long-lived credential that can leak).
+
