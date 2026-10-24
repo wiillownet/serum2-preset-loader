@@ -75,11 +75,26 @@
 
 **Alternatives considered:** Continuing by hand with `twine` (works, but repeats every release and needs the token). A token stored as a repository secret (simpler PyPI setup, but a long-lived credential that can leak).
 
-
 ## [2026-10-23] A measured table for 9 parameters; absent means default
 
 **Decision:** `params.py` maps 9 DAW parameters (oscillator A unison, detune and wavetable position; filter 1 cutoff and resonance; Env 1 attack, decay, sustain and release) to their tree paths, with a per-parameter conversion between the DAW's 0 to 1 norm and the stored value. `get_param` reads an absent field as the plugin's exact `defaultValue`; `set_param` always writes a float and deletes the field when the stored value equals the default's (relative tolerance 1e-9). Missing modules raise `KeyError` and are never created.
 
-**Reason:** A DawDreamer probe of Serum 2.1.5 set each parameter to 0, 0.25, 0.5, 0.75 and 1 and decoded the saved state. Stored units differ per parameter (seconds as 32·n⁵, voices as min(16, floor(16·n) + 1), frames as 1 + 255·n, percent, or the norm itself), so a generator can't write norms directly. Serum omitted every one of the 9 fields at its default, in the probe baseline and in factory presets, so deleting at the default reproduces what Serum writes. The curves were fit to those 5 points each, then re-checked by a second probe at 21 points (0, 0.05, ..., 1), all within float32 rounding. Creating a missing module would guess at a structure Serum builds itself.
+**Reason:** A DawDreamer probe of Serum 2.1.5 set each parameter to 0, 0.25, 0.5, 0.75 and 1 and decoded the saved state. Stored units differ per parameter (seconds as 32·n⁵, voices as min(16, floor(16·n) + 1), wavetable position as 1 + 255·n on a fixed 1 to 256 scale, percent, or the norm itself), so a generator can't write norms directly. Serum omitted every one of the 9 fields in the probe baseline, where all sat at their defaults, so absent means default. Serum does sometimes write a field equal to its default (unison at a norm just above 0 stores 1 voice), so removing it is equivalent rather than byte-identical. The curves were fit to those 5 points each, then re-checked by a second probe at 21 points (0, 0.05, ..., 1), all within float32 rounding; the test fixture holds the 21-point data. Creating a missing module would guess at a structure Serum builds itself.
 
 **Alternatives considered:** Writing the default value explicitly instead of deleting it (Serum likely accepts it, but the file would differ from Serum's own). Probing all 2623 parameters into the table now: the full probe mapped 457 of them, but 9 with checked curves are enough to start a search loop, and FX parameters weren't mapped at all because the baseline had no FX loaded.
+
+## [2026-10-23] Extend the parameter table to oscillators B and C, filter 2 and envelopes 2 to 4
+
+**Decision:** `PARAMS` grows from 9 to 29 entries: unison, detune and wavetable position for oscillators B and C, cutoff and resonance for filter 2, and attack, decay, sustain and release for Env 2 to 4. They reuse the existing curves. The table is built in three loops (oscillators, filters, envelopes) with each DAW index listed explicitly.
+
+**Reason:** In the full Serum 2.1.5 probe, all 20 sit at the matching path in their own module (`Oscillator1`, `WTOsc1`, `VoiceFilter1`, `Env1`, ...) and match the 9 measured curves at the 5 probe points, then at 21 points in a second probe, within float32 rounding. Two differences: the Env 2 to 4 attack default (`defaultValue` 0.10999999940395355, about 0.5 ms, against Env 1's 0.1256), kept per parameter, and Env 2 to 4 sustain, which Serum displays as a percent where Env 1 shows dB (same stored value). DAW indexes are listed rather than computed because their spacing is irregular (Env 1 to 4 attack: 224, 232, 242, 252).
+
+**Alternatives considered:** Writing out all 29 rows by hand (clearer one at a time, but 20 near-copies to keep in sync). Computing indexes from offsets (shorter, but wrong for the envelopes).
+
+## [2026-10-23] Wavetable position raises on a non-wavetable oscillator
+
+**Decision:** `get_param` and `set_param` raise `ValueError` for `osc_*_wt_pos` unless that oscillator's `kParamType` is absent or `"kOsc_WT"`. A malformed `plainParams` (anything but a map or the string `"default"`) raises `ValueError` in both functions, and setting a default on a module without a `plainParams` map changes nothing.
+
+**Reason:** An audit found that DAW slots 53 to 74 of each oscillator (wavetable position among them) control other fields on sample, multisample, granular and spectral oscillators. Every oscillator keeps a `WTOsc#` module whatever its type (all 2316 in the factory presets do), so writing `kParamTablePos` there succeeds but does nothing; 554 of those oscillators are not wavetable. An error is easier to act on than a silent no-op. The same audit found `get_param` raising `TypeError` or silently returning the default for a malformed `plainParams` where `set_param` raised `ValueError`.
+
+**Alternatives considered:** Writing the field anyway and documenting that it has no effect (a search loop would waste evaluations on it). Mapping each oscillator type's own slot 59 parameter (timbre, density, spectral cutoff); that needs a probe per oscillator type and is left for later.
