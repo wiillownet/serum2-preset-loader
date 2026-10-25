@@ -200,10 +200,9 @@ from serum2_preset_loader import (
     build_controller_state, build_processor_state, decode_preset_file,
 )
 
-path = "My Preset.SerumPreset"
-_header, tree = decode_preset_file(path)
-processor = build_processor_state(tree)          # XferJson bytes
-controller = build_controller_state(tree, path)  # XferJson bytes
+_header, tree = decode_preset_file("My Preset.SerumPreset")
+processor = build_processor_state(tree)    # XferJson bytes
+controller = build_controller_state(tree)  # XferJson bytes
 ```
 
 Without the controller state, Serum in the DAW plays the preset but shows
@@ -213,8 +212,10 @@ knob resets to the preset's value. Checked against Live 12's saved state
 under Serum 2.1.5: after Serum loads and re-saves it, the controller state
 matches Live's except for FX fields stored as text (an FX mode such as
 `kParamMode: "Normal"`), whose double-click target falls back to Serum's
-default. `path` is optional; it is made absolute and becomes
-`selectedPresetPath`.
+default. An optional second argument, the preset's path, is made absolute
+and stored as `selectedPresetPath`. Leave it out of a project you share: for
+a user preset it holds your home directory, inside compressed data a text
+search won't find.
 
 ## Untrusted files
 

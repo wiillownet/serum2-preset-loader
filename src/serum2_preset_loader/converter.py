@@ -276,7 +276,9 @@ _CONTROLLER_TOPLEVEL_KEYS: tuple[str, ...] = (
 )
 
 
-def build_controller_state(preset_dict: dict, preset_path: str | None = None) -> bytes:
+def build_controller_state(
+    preset_dict: dict, preset_path: str | os.PathLike[str] | None = None
+) -> bytes:
     """The controller (VST3 IEditController) state for a decoded preset tree.
 
     Holds what a host shows rather than plays: the preset name, author and
@@ -284,8 +286,10 @@ def build_controller_state(preset_dict: dict, preset_path: str | None = None) ->
     settings, and each FX's preset values (what a double-click resets to).
     Without it, Serum in a DAW shows "Init" and default macro names. Text
     valued FX fields are left out of the reset values, which Serum then takes
-    from its own defaults. ``preset_path``, if given, is stored as
-    ``selectedPresetPath``. Uses the tree's own version markers, as
+    from its own defaults. ``preset_path``, if given, is stored as an
+    absolute ``selectedPresetPath`` (``~`` expanded); for a user preset that
+    includes the home directory, so leave it out of a project that will be
+    shared. Uses the tree's own version markers, as
     :func:`build_processor_state` does. The tree is not modified.
     """
     if not isinstance(preset_dict, dict):
@@ -323,7 +327,7 @@ def build_controller_state(preset_dict: dict, preset_path: str | None = None) ->
     )
     if preset_path is not None:
         # Serum resolves it from the host's working directory, not the set's.
-        state["selectedPresetPath"] = os.path.abspath(os.fspath(preset_path))
+        state["selectedPresetPath"] = os.path.abspath(os.path.expanduser(os.fspath(preset_path)))
     raw = cbor2.dumps(state)
     compressed = zstandard.ZstdCompressor().compress(raw)
     meta = {

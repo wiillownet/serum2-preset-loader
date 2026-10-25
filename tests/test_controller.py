@@ -89,6 +89,8 @@ def test_controller_metadata_and_versions():
     assert state["selectedPresetPath"] == "/some/Tiny.SerumPreset"
     _m, rel = _decode(build_controller_state(_tree(), Path("rel") / "Tiny.SerumPreset"))
     assert rel["selectedPresetPath"] == str(Path.cwd() / "rel" / "Tiny.SerumPreset")
+    _m, home = _decode(build_controller_state(_tree(), "~/Tiny.SerumPreset"))
+    assert home["selectedPresetPath"] == str(Path.home() / "Tiny.SerumPreset")
     assert (meta["productVersion"], meta["version"]) == (state["productVersion"], state["version"]) == ("2.0.12", 4.0)
     assert type(state["version"]) is float
     json_len = struct.unpack("<Q", blob[9:17])[0]
@@ -170,4 +172,4 @@ def test_readme_example_runs(tmp_path, monkeypatch):
     scope: dict = {}
     exec(compile(block, "README", "exec"), scope)
     assert _decode(scope["processor"])[0]["component"] == "processor"
-    assert _decode(scope["controller"])[1]["selectedPresetPath"] == str(tmp_path / "My Preset.SerumPreset")
+    assert "selectedPresetPath" not in _decode(scope["controller"])[1]
