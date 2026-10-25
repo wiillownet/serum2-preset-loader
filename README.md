@@ -213,7 +213,8 @@ knob resets to the preset's value. Checked against Live 12's saved state
 under Serum 2.1.5: after Serum loads and re-saves it, the controller state
 matches Live's except for FX fields stored as text (an FX mode such as
 `kParamMode: "Normal"`), whose double-click target falls back to Serum's
-default. `path` is optional and becomes `selectedPresetPath`.
+default. `path` is optional; it is made absolute and becomes
+`selectedPresetPath`.
 
 ## Untrusted files
 

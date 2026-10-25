@@ -11,8 +11,10 @@ Mapping the two shapes is a small, mostly mechanical transform.
 """
 from __future__ import annotations
 
-import copy
 import hashlib
+import math
+import numbers
+import os
 import struct
 from types import MappingProxyType
 from typing import Any, Mapping
@@ -289,8 +291,11 @@ def build_controller_state(preset_dict: dict, preset_path: str | None = None) ->
     if not isinstance(preset_dict, dict):
         raise TypeError(f"preset tree must be a dict, got {type(preset_dict).__name__}")
     product, version = _version_markers(preset_dict)
-    state: dict[str, Any] = {k: copy.deepcopy(preset_dict[k])
-                             for k in _CONTROLLER_TOPLEVEL_KEYS if k in preset_dict}
+    for key in ("presetName", "presetAuthor", "presetDescription", "presetComment"):
+        if key in preset_dict and not isinstance(preset_dict[key], str):
+            raise ValueError(f"preset {key} {preset_dict[key]!r:.60} is not a string")
+    # Nothing below modifies these values; cbor2 only reads them.
+    state: dict[str, Any] = {k: preset_dict[k] for k in _CONTROLLER_TOPLEVEL_KEYS if k in preset_dict}
     for key, module in preset_dict.items():
         if not isinstance(module, dict):
             continue
@@ -299,8 +304,7 @@ def build_controller_state(preset_dict: dict, preset_path: str | None = None) ->
             if macro:       # Serum leaves out a macro with no name or value
                 state[key] = macro
         elif _matches_prefix_with_index(key, "MidiClip"):
-            state[key] = {k: copy.deepcopy(module[k])
-                          for k in _PRESET_ONLY_SUBKEYS_BY_PREFIX["MidiClip"] if k in module}
+            state[key] = {k: module[k] for k in _PRESET_ONLY_SUBKEYS_BY_PREFIX["MidiClip"] if k in module}
         elif _matches_prefix_with_index(key, "ArpClip"):
             state[key] = {}
         elif _matches_prefix_with_index(key, "FXRack"):
@@ -318,7 +322,8 @@ def build_controller_state(preset_dict: dict, preset_path: str | None = None) ->
         version=version,
     )
     if preset_path is not None:
-        state["selectedPresetPath"] = str(preset_path)
+        # Serum resolves it from the host's working directory, not the set's.
+        state["selectedPresetPath"] = os.path.abspath(os.fspath(preset_path))
     raw = cbor2.dumps(state)
     compressed = zstandard.ZstdCompressor().compress(raw)
     meta = {
@@ -344,6 +349,8 @@ def _controller_macro(module: dict) -> dict:
     plain = module.get("plainParams")
     value = plain.get("kParamValue") if isinstance(plain, dict) else None
     if _is_number(value):
+        if not 0 <= value <= 100:
+            raise ValueError(f"macro value {value!r:.60} is outside 0..100")
         out["default"] = value / 100    # the macro's preset value, 0 to 1
     return out
 
@@ -352,23 +359,27 @@ def _controller_fx_rack(module: dict) -> dict:
     out: dict[str, Any] = {"displayName": module.get("displayName", "")}
     fxs = module.get("FX")
     if isinstance(fxs, list) and fxs:
-        out["FX"] = [_controller_fx(fx) for fx in fxs if isinstance(fx, dict)]
+        # One entry per slot, even a malformed one, so later FX keep their index.
+        out["FX"] = [_controller_fx(fx if isinstance(fx, dict) else {}) for fx in fxs]
     return out
 
 
 def _controller_fx(fx: dict) -> dict:
     # Each FX entry holds one FX module (`FXDelay`, ...) next to `type` and
-    # `kUIParamMixOrGain`. Serum rejects a string in defaultPlainValues.
+    # `kUIParamMixOrGain`. Serum rejects a string in defaultPlainValues;
+    # booleans go in as 1.0 / 0.0.
     plain: Any = {}
     for name, value in fx.items():
         if name.startswith("FX") and isinstance(value, dict):
             plain = value.get("plainParams", {})
-    numbers = {k: v for k, v in plain.items() if _is_number(v)} if isinstance(plain, dict) else {}
-    return {"defaultPlainValues": numbers, "kUIParamMixOrGain": fx.get("kUIParamMixOrGain", 0.0)}
+    values = {k: float(v) for k, v in plain.items()
+              if isinstance(v, bool) or (_is_number(v) and math.isfinite(v))} if isinstance(plain, dict) else {}
+    return {"defaultPlainValues": values, "kUIParamMixOrGain": fx.get("kUIParamMixOrGain", 0.0)}
 
 
 def _is_number(value: Any) -> bool:
-    return isinstance(value, (int, float)) and not isinstance(value, bool)
+    # Same rule as params.py: any real number except a bool.
+    return isinstance(value, numbers.Real) and not isinstance(value, bool)
 
 
 def convert_preset_file(preset_path: str) -> bytes:

@@ -77,8 +77,8 @@ def test_controller_module_shapes():
     assert state["VoicePanel0"] == {"displayName": ""}
     assert state["FXRack1"] == {"displayName": ""}
     assert state["FXRack0"] == {"displayName": "RACK", "FX": [
-        # text and boolean fields are left out; Serum rejects a string here
-        {"defaultPlainValues": {"kParamWet": 22.0}, "kUIParamMixOrGain": 0.5},
+        # text fields are left out (Serum rejects a string here); booleans become floats
+        {"defaultPlainValues": {"kParamWet": 22.0, "kParamHQ": 1.0}, "kUIParamMixOrGain": 0.5},
         {"defaultPlainValues": {}, "kUIParamMixOrGain": 0.0},
     ]}
 
@@ -87,6 +87,8 @@ def test_controller_metadata_and_versions():
     blob = build_controller_state(_tree(), "/some/Tiny.SerumPreset")
     meta, state = _decode(blob)
     assert state["selectedPresetPath"] == "/some/Tiny.SerumPreset"
+    _m, rel = _decode(build_controller_state(_tree(), Path("rel") / "Tiny.SerumPreset"))
+    assert rel["selectedPresetPath"] == str(Path.cwd() / "rel" / "Tiny.SerumPreset")
     assert (meta["productVersion"], meta["version"]) == (state["productVersion"], state["version"]) == ("2.0.12", 4.0)
     assert type(state["version"]) is float
     json_len = struct.unpack("<Q", blob[9:17])[0]
@@ -99,6 +101,33 @@ def test_controller_does_not_mutate_tree():
     before = copy.deepcopy(tree)
     build_controller_state(tree, "/x")
     assert tree == before
+
+
+@pytest.mark.parametrize("key, value", [
+    ("presetName", b"Tiny"), ("presetAuthor", 5), ("presetDescription", None), ("presetComment", ["x"]),
+])
+def test_controller_rejects_non_string_text(key, value):
+    tree = _tree()
+    tree[key] = value
+    with pytest.raises(ValueError, match=key):
+        build_controller_state(tree)
+
+
+@pytest.mark.parametrize("value", [10**400, -1.0, 100.5, float("nan")])
+def test_controller_rejects_bad_macro_value(value):
+    tree = _tree()
+    tree["Macro1"]["plainParams"]["kParamValue"] = value
+    with pytest.raises(ValueError, match="macro value"):
+        build_controller_state(tree)
+
+
+def test_malformed_fx_entry_keeps_later_fx_in_place():
+    tree = _tree()
+    tree["FXRack0"]["FX"].insert(0, None)
+    _meta, state = _decode(build_controller_state(tree))
+    fx = state["FXRack0"]["FX"]
+    assert fx[0] == {"defaultPlainValues": {}, "kUIParamMixOrGain": 0.0}
+    assert fx[1]["defaultPlainValues"]["kParamWet"] == 22.0
 
 
 def test_controller_rejects_bad_input():
@@ -141,4 +170,4 @@ def test_readme_example_runs(tmp_path, monkeypatch):
     scope: dict = {}
     exec(compile(block, "README", "exec"), scope)
     assert _decode(scope["processor"])[0]["component"] == "processor"
-    assert _decode(scope["controller"])[1]["selectedPresetPath"] == "My Preset.SerumPreset"
+    assert _decode(scope["controller"])[1]["selectedPresetPath"] == str(tmp_path / "My Preset.SerumPreset")
