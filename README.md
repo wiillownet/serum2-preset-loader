@@ -10,8 +10,10 @@ VST3 state blobs that [DawDreamer](https://github.com/DBraun/DawDreamer) can
 load into Serum 2 — so you can render presets to audio without opening the
 Serum GUI — and decode, edit and re-encode the preset files themselves.
 
-Tested against Serum 2.1.4 on macOS. Its output also loads in Serum 2.1.5
-(checked through DawDreamer), where the parameter table below was measured.
+Tested against Serum 2.1.5 on macOS, through DawDreamer: every installed
+preset under 20 MB loads, and Serum ends up in the same state as when Live
+opens the preset itself, apart from three host or compat fields (see Caveats).
+The parameter table below was measured there too.
 
 For a ready-made renderer built on top of this library, see
 [serum-render](https://github.com/wiillownet/serum-render).
@@ -136,16 +138,17 @@ default and `set_param` removes the field when you set the default. Wavetable
 position only applies to a wavetable oscillator: on a sample, multisample,
 granular or spectral oscillator both functions raise `ValueError`.
 
-## Targeting a different Serum build
+## Version markers
 
-The version markers Serum embeds in the processor-state CBOR are exposed as
-module attributes you can override before calling the converter:
+The state keeps the preset's own `version` and `productVersion`, so Serum
+migrates an older preset exactly as it does when it opens the file itself.
+A tree without them gets `converter.PROCESSOR_FORMAT_VERSION` (11.0) and
+`converter.PROCESSOR_PRODUCT_VERSION` (`"2.1.5"`), which Serum loads as
+current. If Serum bumps the XferJson wrapper:
 
 ```python
 from serum2_preset_loader import converter
-converter.PROCESSOR_PRODUCT_VERSION = "2.2.0"
-converter.PROCESSOR_FORMAT_VERSION = 11.0
-# converter.SUPPORTED_XFERJSON_VERSION = 3   # if Serum bumps the wrapper
+converter.SUPPORTED_XFERJSON_VERSION = 3
 ```
 
 ## Untrusted files
@@ -282,15 +285,14 @@ Serum re-serializing.)
 | key | value |
 |---|---|
 | `component` | `"processor"` |
-| `killEnvsGracefullyCompat` | `true` |
 | `Arp0.activeClip` | `0` (defaults to first clip; not present in preset) |
-| `productVersion` | `"2.1.4"` |
-| `version` | `10.0` (CBOR float; not int — Serum's `getState` writes a major-7 float here) |
+| `productVersion` | the preset's own (fallback `"2.1.5"`) |
+| `version` | the preset's own, as a CBOR float (fallback `11.0`); Serum migrates from it |
 
 There are also a few preset-only **sub-keys** the converter strips:
 `Macro{0..7}.name`, `FXRack{0..2}.displayName`, extra UI fields on
-`MidiClip{0..11}` (`laneTabs`, `gridWidth_Beats`, `name`, …),
-`PitchQuantizer{n}.scaleName`.
+`MidiClip{0..11}` (`laneTabs`, `gridWidth_Beats`, `name`, …).
+`PitchQuantizer{n}.scaleName` is kept: without it Serum picks another scale.
 
 ### Putting it back together
 
@@ -308,10 +310,13 @@ attempts and the probes used to diff the two formats — see
 
 ## Caveats
 
-- The converter targets Serum 2.1.4 (the parameter table was measured on
-  2.1.5). If a future Serum version changes the schema, the
-  converter may need new mappings; `docs/DERIVATION.md` describes how to
-  re-derive them.
+- Serum loads a state older than version 11.0 (any preset saved before
+  2.1.5) with `noteOnExpressionCompat` and `roundingModeCompat` switched on,
+  which opening the preset in Serum's browser doesn't do. They can't be
+  turned off from the state, and stamping 11.0 instead would skip Serum's
+  migration. `mpeEnabled` comes from the host.
+- If a future Serum version changes the schema, the converter may need new
+  mappings; `docs/DERIVATION.md` describes how to re-derive them.
 - Per-instance audio randomization (unison detune phase, sample start, etc.)
   means rendered audio is not bit-identical to a manual GUI load — but it's
   audibly the same patch.

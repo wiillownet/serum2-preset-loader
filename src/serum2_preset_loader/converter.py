@@ -5,7 +5,7 @@ have either ``plainParams: "default"`` or an empty map (the 2.1.4 test preset
 uses only empty maps), and the file carries extra UI / library / metadata
 fields. Serum 2's runtime processor state CBOR (what Serum writes via
 VST3 IComponent::getState) uses fully expanded ``plainParams: {}`` for unchanged
-modules, omits the UI/metadata, and adds a couple of processor-only fields.
+modules, omits the UI/metadata, and adds ``component: "processor"``.
 
 Mapping the two shapes is a small, mostly mechanical transform.
 """
@@ -42,23 +42,18 @@ _PRESET_ONLY_TOPLEVEL_KEYS: frozenset[str] = frozenset({
 
 _PROCESSOR_EXTRA_TOPLEVEL: Mapping[str, Any] = MappingProxyType({
     "component": "processor",
-    "killEnvsGracefullyCompat": True,
 })
 
-# Current Serum 2 processor-state version markers (observed in 2.1.4).
-# `PROCESSOR_FORMAT_VERSION` is intentionally a Python float — Serum's getState
-# writes a CBOR major-7 (float) value here, not an integer. cbor2 preserves the
-# int/float distinction on encode, so emitting an int would produce a CBOR
-# document that doesn't byte-match what Serum produces.
+# The state carries the preset's own `version` and `productVersion`, so
+# Serum runs the same migration it runs when it opens the preset itself (FX
+# Distortion Freq rescaling, behaviour-compat flags, ...). Stamping a newer
+# version skipped that migration and changed how old presets sound.
 #
-# These are public so callers targeting a different Serum build can override
-# them without monkey-patching:
-#
-#     from serum2_preset_loader import converter
-#     converter.PROCESSOR_PRODUCT_VERSION = "2.2.0"
-#     converter.PROCESSOR_FORMAT_VERSION = 11.0
-PROCESSOR_PRODUCT_VERSION = "2.1.4"
-PROCESSOR_FORMAT_VERSION = 10.0
+# These are the fallback for a tree that has no version markers: Serum 2.1.5,
+# which then loads it as current. `PROCESSOR_FORMAT_VERSION` is a float because
+# Serum's getState writes a CBOR float there, not an integer.
+PROCESSOR_PRODUCT_VERSION = "2.1.5"
+PROCESSOR_FORMAT_VERSION = 11.0
 
 # Highest `XferJson` envelope format version this converter knows how to
 # read/write. Serum 2.1.4 ships v2; if a future Serum bumps the wrapper to v3
@@ -66,7 +61,7 @@ PROCESSOR_FORMAT_VERSION = 10.0
 SUPPORTED_XFERJSON_VERSION = 2
 
 # A "prefix" here means the module-name family followed by an integer suffix
-# (e.g. "Macro0", "PitchQuantizer3"). Using a blacklist (rather than
+# (e.g. "Macro0", "MidiClip3"). Using a blacklist (rather than
 # whitelisting "clip"/"plainParams") so that any new processor-side fields a
 # future Serum version adds will pass through instead of being silently
 # dropped.
@@ -77,7 +72,6 @@ _PRESET_ONLY_SUBKEYS_BY_PREFIX: dict[str, tuple[str, ...]] = {
         "displayLength_Beats", "gridWidth_Beats", "gridYOffset_Rows",
         "laneTabs", "name",
     ),
-    "PitchQuantizer":  ("scaleName",),
 }
 
 
@@ -125,6 +119,7 @@ def _strip_preset_only_subkeys(state: dict) -> None:
 
 def preset_cbor_to_processor_cbor(preset_cbor: dict) -> dict:
     """Pure dict-to-dict transformation. Does not touch wrappers."""
+    markers = _version_markers(preset_cbor)    # before the expensive copy
     state = _copy_expanding_plainparams(preset_cbor)
     for k in _PRESET_ONLY_TOPLEVEL_KEYS:
         state.pop(k, None)
@@ -135,12 +130,30 @@ def preset_cbor_to_processor_cbor(preset_cbor: dict) -> dict:
     for k, v in state.items():
         if isinstance(v, dict) and _matches_prefix_with_index(k, "Arp"):
             v.setdefault("activeClip", 0)
-    state["productVersion"] = PROCESSOR_PRODUCT_VERSION
-    state["version"] = PROCESSOR_FORMAT_VERSION
+    state["productVersion"], state["version"] = markers
     return state
 
 
-def _build_processor_metadata(compressed_cbor: bytes) -> dict:
+def _version_markers(preset_cbor: dict) -> tuple[str, float]:
+    """The tree's ``(productVersion, version)``, or the fallback constants.
+
+    Both or neither: one alone would pair an old version with the current
+    product (or the reverse), and Serum migrates from the pair.
+    """
+    present = [k for k in ("productVersion", "version") if k in preset_cbor]
+    if len(present) == 1:
+        raise ValueError(f"preset has {present[0]} but not "
+                         f"{({'productVersion', 'version'} - set(present)).pop()}; set both or neither")
+    product = preset_cbor.get("productVersion", PROCESSOR_PRODUCT_VERSION)
+    version = preset_cbor.get("version", PROCESSOR_FORMAT_VERSION)
+    if not isinstance(product, str) or not product:
+        raise ValueError(f"preset productVersion {product!r} is not a non-empty string")
+    if isinstance(version, bool) or not isinstance(version, (int, float)) or not 0 < version < 1e6:
+        raise ValueError(f"preset version {version!r} is not a positive number")
+    return product, float(version)
+
+
+def _build_processor_metadata(compressed_cbor: bytes, product_version: str, version: float) -> dict:
     """Build the JSON metadata header Serum writes alongside its IComponent state.
 
     The ``hash`` field is md5 of the *compressed* CBOR payload — verified by
@@ -155,10 +168,10 @@ def _build_processor_metadata(compressed_cbor: bytes) -> dict:
         # The hash is integrity, not security.
         "hash": hashlib.md5(compressed_cbor, usedforsecurity=False).hexdigest(),
         "product": "Serum2",
-        "productVersion": PROCESSOR_PRODUCT_VERSION,
+        "productVersion": product_version,
         "url": "https://xferrecords.com/",
         "vendor": "Xfer Records",
-        "version": PROCESSOR_FORMAT_VERSION,
+        "version": version,
     }
 
 
@@ -214,6 +227,7 @@ def _convert_owned_tree(holder: list) -> bytes:
     lists, so once ``proc_dict`` is deleted below, nothing keeps the decoded
     sample arrays alive during compression."""
     proc_dict = preset_cbor_to_processor_cbor(holder.pop())
+    markers = proc_dict["productVersion"], proc_dict["version"]
     proc_cbor = cbor2.dumps(proc_dict)
     # The decoded tree of a sample-based preset is ~2 GB of float objects;
     # drop it before the compress/base64 copies below stack on top of it.
@@ -224,7 +238,7 @@ def _convert_owned_tree(holder: list) -> bytes:
     # the cross-call invariant that two independent ZstdCompressor invocations
     # produce byte-identical output.
     compressed_cbor = zstandard.ZstdCompressor().compress(proc_cbor)
-    proc_meta = _build_processor_metadata(compressed_cbor)
+    proc_meta = _build_processor_metadata(compressed_cbor, *markers)
     icomponent = wrap_xferjson_precompressed(
         proc_meta, compressed_cbor, uncompressed_size=len(proc_cbor)
     )

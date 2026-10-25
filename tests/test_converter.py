@@ -13,6 +13,8 @@ import pytest
 import zstandard
 
 from serum2_preset_loader import (
+    PROCESSOR_FORMAT_VERSION,
+    PROCESSOR_PRODUCT_VERSION,
     convert_preset_bytes,
     convert_preset_file,
     preset_cbor_to_processor_cbor,
@@ -53,7 +55,8 @@ def _minimal_preset_cbor() -> dict:
             "displayLength_Beats": 8.0,
             "gridYOffset_Rows": 2,
         },
-        # PitchQuantizer with `scaleName` (rule: drop)
+        # PitchQuantizer with `scaleName` (kept: without it Serum picks a
+        # different scale on load)
         "PitchQuantizer0": {"plainParams": "default", "scale": [], "scaleName": "C major"},
         # module with real plainParams (rule: pass through)
         "LFO0": {
@@ -76,7 +79,7 @@ def _minimal_preset_cbor() -> dict:
         "SpectralOsc": [],
         "arpBankDisplayName": "",
         "clipBankDisplayName": "",
-        # shared metadata that should get overridden
+        # version markers, passed through so Serum migrates from them
         "productVersion": "2.0.12",
         "version": 4.0,
     }
@@ -114,7 +117,7 @@ def test_preset_only_subkeys_dropped():
     for k in ("laneTabs", "gridWidth_Beats", "name",
               "displayLength_Beats", "gridYOffset_Rows"):
         assert k not in out["MidiClip1"]
-    assert "scaleName" not in out["PitchQuantizer0"]
+    assert out["PitchQuantizer0"]["scaleName"] == "C major"
     # should keep the legitimate processor-side fields
     assert "clip" in out["MidiClip1"]
     assert "scale" in out["PitchQuantizer0"]
@@ -123,7 +126,8 @@ def test_preset_only_subkeys_dropped():
 def test_processor_only_keys_added():
     out = preset_cbor_to_processor_cbor(_minimal_preset_cbor())
     assert out["component"] == "processor"
-    assert out["killEnvsGracefullyCompat"] is True
+    # Serum sets its own compat flags while migrating an old version.
+    assert "killEnvsGracefullyCompat" not in out
     assert out["Arp0"]["activeClip"] == 0
 
 
@@ -144,10 +148,45 @@ def test_arp_active_clip_does_not_overwrite_existing_value():
     assert out["Arp0"]["activeClip"] == 7
 
 
-def test_version_markers_overwritten():
+def test_version_markers_pass_through():
     out = preset_cbor_to_processor_cbor(_minimal_preset_cbor())
-    assert out["productVersion"] == "2.1.4"
-    assert out["version"] == 10.0
+    assert out["productVersion"] == "2.0.12"
+    assert out["version"] == 4.0
+
+
+def test_missing_version_markers_fall_back_to_current():
+    inp = _minimal_preset_cbor()
+    del inp["productVersion"], inp["version"]
+    out = preset_cbor_to_processor_cbor(inp)
+    assert out["productVersion"] == PROCESSOR_PRODUCT_VERSION == "2.1.5"
+    assert out["version"] == PROCESSOR_FORMAT_VERSION == 11.0
+
+
+@pytest.mark.parametrize("missing", ["version", "productVersion"])
+def test_one_version_marker_alone_rejected(missing):
+    inp = _minimal_preset_cbor()
+    del inp[missing]
+    with pytest.raises(ValueError, match=f"not {missing}; set both or neither"):
+        preset_cbor_to_processor_cbor(inp)
+
+
+def test_int_version_written_as_float():
+    inp = _minimal_preset_cbor()
+    inp["version"] = 4
+    out = preset_cbor_to_processor_cbor(inp)
+    assert type(out["version"]) is float and out["version"] == 4.0
+
+
+@pytest.mark.parametrize("key, value", [
+    ("version", "4.0"), ("version", True), ("version", 0.0), ("version", -1.0),
+    ("version", float("nan")), ("version", float("inf")), ("version", None),
+    ("productVersion", 2), ("productVersion", None), ("productVersion", ""),
+])
+def test_bad_version_markers_rejected(key, value):
+    inp = _minimal_preset_cbor()
+    inp[key] = value
+    with pytest.raises(ValueError, match=key):
+        preset_cbor_to_processor_cbor(inp)
 
 
 def test_version_is_serialized_as_cbor_float():
@@ -187,16 +226,13 @@ def test_prefix_match_requires_digit_suffix():
     assert out["MacroBank"]["name"] == "should-not-be-stripped"
 
 
-def test_pitchquantizer_prefix_handles_arbitrary_index():
-    """PitchQuantizer is on the prefix table; a hypothetical PitchQuantizer1
-    should be stripped the same way as PitchQuantizer0."""
+def test_pitchquantizer_scale_name_kept_on_any_index():
     inp = _minimal_preset_cbor()
     inp["PitchQuantizer1"] = {
         "plainParams": "default", "scale": [], "scaleName": "D minor",
     }
     out = preset_cbor_to_processor_cbor(inp)
-    assert "scaleName" not in out["PitchQuantizer1"]
-    assert "scale" in out["PitchQuantizer1"]
+    assert out["PitchQuantizer1"]["scaleName"] == "D minor"
 
 
 # ─── convert_preset_bytes (full pipeline) ─────────────────────────────────
@@ -239,7 +275,8 @@ def test_convert_preset_bytes_hash_is_md5_of_compressed_cbor():
 
     assert meta["hash"] == hashlib.md5(compressed_cbor, usedforsecurity=False).hexdigest()
     assert meta["component"] == "processor"
-    assert meta["productVersion"] == "2.1.4"
+    assert meta["productVersion"] == "2.0.12"
+    assert meta["version"] == 4.0
 
 
 # ─── Input shape validation ───────────────────────────────────────────────
