@@ -89,6 +89,8 @@ def test_controller_metadata_and_versions():
     assert state["selectedPresetPath"] == "/some/Tiny.SerumPreset"
     _m, rel = _decode(build_controller_state(_tree(), Path("rel") / "Tiny.SerumPreset"))
     assert rel["selectedPresetPath"] == str(Path.cwd() / "rel" / "Tiny.SerumPreset")
+    _m, home = _decode(build_controller_state(_tree(), "~/Tiny.SerumPreset"))
+    assert home["selectedPresetPath"] == str(Path.home() / "Tiny.SerumPreset")
     assert (meta["productVersion"], meta["version"]) == (state["productVersion"], state["version"]) == ("2.0.12", 4.0)
     assert type(state["version"]) is float
     json_len = struct.unpack("<Q", blob[9:17])[0]

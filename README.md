@@ -213,10 +213,9 @@ under Serum 2.1.5: after Serum loads and re-saves it, the controller state
 matches Live's except for FX fields stored as text (an FX mode such as
 `kParamMode: "Normal"`), whose double-click target falls back to Serum's
 default. An optional second argument, the preset's path, is made absolute
-and stored as `selectedPresetPath` (the preset Serum's browser marks as
-loaded). Leave it out of a project you share: for a user
-preset it holds your home directory, inside compressed data a text search
-won't find.
+and stored as `selectedPresetPath`. Leave it out of a project you share: for
+a user preset it holds your home directory, inside compressed data a text
+search won't find.
 
 ## Untrusted files
 

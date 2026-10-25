@@ -124,3 +124,11 @@
 Text fields that aren't strings and macro values outside 0 to 100 raise `ValueError`; boolean FX fields go into `defaultPlainValues` as 1.0 or 0.0; a malformed FX entry keeps its slot; `preset_path` is made absolute.
 
 **Alternatives considered:** Adding the controller to the DawDreamer blob from `convert_*` (no effect on audio, and it changes serum-render's input for nothing). Mapping text FX fields to their index for `defaultPlainValues` (needs an enum table per FX field; only affects double-click reset). A single function returning both blobs (two functions let a caller build one without the other).
+
+## [2026-10-25] Leave the preset path out of shared controller states
+
+**Decision:** `build_controller_state` keeps its optional `preset_path`, stored as an absolute `selectedPresetPath` with `~` expanded, but the README example no longer passes it, and the README and docstring warn against it in a project that will be shared.
+
+**Reason:** For a user preset the path holds the home directory, and it sits in zstd-compressed CBOR where a text search, such as alskit's content guard, can't see it (alskit's PLAN, S1 row). Live's own save writes it, so a caller who wants Serum's state to match Live can still pass it. A relative path would point nowhere: Serum resolves it from the host's working directory.
+
+**Alternatives considered:** Dropping the argument (loses parity with Live's own state for local use). Storing the path with the home directory collapsed to `~` (Serum would have to expand it; untested). Rejecting paths under the home directory (blocks the common local case).
