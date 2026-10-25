@@ -187,6 +187,35 @@ from serum2_preset_loader import converter
 converter.SUPPORTED_XFERJSON_VERSION = 3
 ```
 
+## State for a DAW project
+
+A DAW saves two blobs per VST3 plugin: the processor state, which sets the
+sound, and the controller state, which holds what the plugin shows. `convert_*`
+gives DawDreamer the processor state only, which is all rendering needs. To
+write a preset into a DAW project (for example with
+[alskit](https://github.com/wiillownet/alskit)), build both:
+
+```python
+from serum2_preset_loader import (
+    build_controller_state, build_processor_state, decode_preset_file,
+)
+
+path = "My Preset.SerumPreset"
+_header, tree = decode_preset_file(path)
+processor = build_processor_state(tree)          # XferJson bytes
+controller = build_controller_state(tree, path)  # XferJson bytes
+```
+
+Without the controller state, Serum in the DAW plays the preset but shows
+"Init" and default macro names. With it, Serum shows the preset's name,
+author, description, macro names and clip names, and a double-click on an FX
+knob resets to the preset's value. Checked against Live 12's saved state
+under Serum 2.1.5: after Serum loads and re-saves it, the controller state
+matches Live's except for FX fields stored as text (an FX mode such as
+`kParamMode: "Normal"`), whose double-click target falls back to Serum's
+default. `path` is optional; it is made absolute and becomes
+`selectedPresetPath`.
+
 ## Untrusted files
 
 Every corrupt, truncated or hostile input raises `ValueError` (or `OSError`
