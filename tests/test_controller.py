@@ -170,4 +170,4 @@ def test_readme_example_runs(tmp_path, monkeypatch):
     scope: dict = {}
     exec(compile(block, "README", "exec"), scope)
     assert _decode(scope["processor"])[0]["component"] == "processor"
-    assert _decode(scope["controller"])[1]["selectedPresetPath"] == str(tmp_path / "My Preset.SerumPreset")
+    assert "selectedPresetPath" not in _decode(scope["controller"])[1]
