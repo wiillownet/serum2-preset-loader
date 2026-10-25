@@ -96,11 +96,13 @@ where the value fits, 64-bit otherwise) and its alphabetical key order, so the
 unedited test preset round-trips to identical CBOR. The Zstd stream around it
 differs from Serum's, so files are not byte-identical overall.
 
-**Verified in Serum 2:** a factory preset decoded, edited (name and filter
-cutoff) and written this way loads with both edits applied. Still open: whether
-Serum writes non-ASCII preset names as raw UTF-8 (this writes `\u` escapes),
-and whether it accepts an `int` where it wrote a float (write `1.0`, not `1`,
-when editing).
+**Verified in Serum 2.1.5:** a factory preset decoded, edited (name and
+filter cutoff) and written this way loads with both edits applied. A
+non-ASCII name (`Café ñ 日本 ü`) shows correctly in the browser and the
+preset display. This package writes it as `\u` escapes, while Serum itself
+writes raw UTF-8 in decomposed (NFD) form; both load. An `int` where Serum
+writes a float (`kParamUnison = 4`, `kParamFreq = 1`) loads as the same
+value.
 
 ### Rendering an edited preset without writing a file
 
