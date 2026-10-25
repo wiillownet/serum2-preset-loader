@@ -21,8 +21,6 @@ import cbor2
 import pytest
 
 from serum2_preset_loader import (
-    PROCESSOR_FORMAT_VERSION,
-    PROCESSOR_PRODUCT_VERSION,
     convert_preset_bytes,
     read_preset_metadata,
 )
@@ -95,8 +93,9 @@ def test_inner_xferjson_has_processor_metadata(converted):
     assert version == 2
     assert meta["component"] == "processor"
     assert meta["product"] == "Serum2"
-    assert meta["productVersion"] == PROCESSOR_PRODUCT_VERSION
-    assert meta["version"] == PROCESSOR_FORMAT_VERSION
+    # The fixture was saved by 2.1.4; its own markers pass through.
+    assert meta["productVersion"] == "2.1.4"
+    assert meta["version"] == 10.0
 
 
 def test_inner_hash_is_md5_of_compressed_cbor(converted):
@@ -122,9 +121,9 @@ def _converted_cbor(state_blob: bytes) -> dict:
 def test_processor_only_toplevel_keys_present(converted):
     state = _converted_cbor(converted)
     assert state["component"] == "processor"
-    assert state["killEnvsGracefullyCompat"] is True
-    assert state["productVersion"] == PROCESSOR_PRODUCT_VERSION
-    assert state["version"] == PROCESSOR_FORMAT_VERSION
+    assert "killEnvsGracefullyCompat" not in state
+    assert state["productVersion"] == "2.1.4"
+    assert state["version"] == 10.0
 
 
 def test_preset_only_toplevel_keys_stripped(converted):

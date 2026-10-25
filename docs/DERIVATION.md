@@ -163,7 +163,8 @@ processor_cbor = cbor2.loads(unwrap_xferjson(_extract_icomponent(open("state_loa
   `MultiSampleOsc`, `SpectralOsc`), preset metadata (`presetName`,
   `presetAuthor`, …).
 - **2 keys processor-only** — `component: "processor"` and
-  `killEnvsGracefullyCompat: true`.
+  `killEnvsGracefullyCompat: true`. (2.1.5 note: the converter no longer
+  adds the second; Serum sets it itself when migrating an old preset.)
 
 **Within-key diff (the important one):**
 
@@ -262,7 +263,8 @@ init patch (RMS matches the no-load baseline), follow this playbook:
    `Macro0`, `ModSlot0`. For each: are `plainParams` the same shape? Is the
    `"default"` sentinel still in use? Are there new sub-keys to strip or pass
    through?
-7. **Update version markers.** `PROCESSOR_PRODUCT_VERSION` and
-   `PROCESSOR_FORMAT_VERSION` in `converter.py`.
+7. **Update the fallback version markers.** `PROCESSOR_PRODUCT_VERSION` and
+   `PROCESSOR_FORMAT_VERSION` in `converter.py` apply only to a tree without
+   its own; a preset's markers always pass through.
 8. **Re-run the validation table from Phase 6.** Converter RMS within ~5% of
    GUI-loaded RMS, both clearly distinct from no-load RMS = pass.
