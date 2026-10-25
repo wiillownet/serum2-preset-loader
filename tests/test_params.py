@@ -173,7 +173,7 @@ def test_set_keeps_other_fields(preset):
 def test_readme_example_runs(tmp_path, monkeypatch):
     import re
     readme = (Path(__file__).parent.parent / "README.md").read_text(encoding="utf-8")
-    section = readme[readme.index("## Parameters"):readme.index("## Targeting a different Serum build")]
+    section = readme[readme.index("## Parameters"):readme.index("## Version markers")]
     (block,) = re.findall(r"```python\n(.*?)```", section, re.S)
     (tmp_path / "My Preset.SerumPreset").write_bytes(PRESET.read_bytes())
     monkeypatch.chdir(tmp_path)

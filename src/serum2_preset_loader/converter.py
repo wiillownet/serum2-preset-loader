@@ -5,7 +5,7 @@ have either ``plainParams: "default"`` or an empty map (the 2.1.4 test preset
 uses only empty maps), and the file carries extra UI / library / metadata
 fields. Serum 2's runtime processor state CBOR (what Serum writes via
 VST3 IComponent::getState) uses fully expanded ``plainParams: {}`` for unchanged
-modules, omits the UI/metadata, and adds a couple of processor-only fields.
+modules, omits the UI/metadata, and adds ``component: "processor"``.
 
 Mapping the two shapes is a small, mostly mechanical transform.
 """
@@ -61,7 +61,7 @@ PROCESSOR_FORMAT_VERSION = 11.0
 SUPPORTED_XFERJSON_VERSION = 2
 
 # A "prefix" here means the module-name family followed by an integer suffix
-# (e.g. "Macro0", "PitchQuantizer3"). Using a blacklist (rather than
+# (e.g. "Macro0", "MidiClip3"). Using a blacklist (rather than
 # whitelisting "clip"/"plainParams") so that any new processor-side fields a
 # future Serum version adds will pass through instead of being silently
 # dropped.
@@ -119,6 +119,7 @@ def _strip_preset_only_subkeys(state: dict) -> None:
 
 def preset_cbor_to_processor_cbor(preset_cbor: dict) -> dict:
     """Pure dict-to-dict transformation. Does not touch wrappers."""
+    markers = _version_markers(preset_cbor)    # before the expensive copy
     state = _copy_expanding_plainparams(preset_cbor)
     for k in _PRESET_ONLY_TOPLEVEL_KEYS:
         state.pop(k, None)
@@ -129,16 +130,24 @@ def preset_cbor_to_processor_cbor(preset_cbor: dict) -> dict:
     for k, v in state.items():
         if isinstance(v, dict) and _matches_prefix_with_index(k, "Arp"):
             v.setdefault("activeClip", 0)
-    state["productVersion"], state["version"] = _version_markers(preset_cbor)
+    state["productVersion"], state["version"] = markers
     return state
 
 
 def _version_markers(preset_cbor: dict) -> tuple[str, float]:
-    """The tree's ``(productVersion, version)``, or the fallback constants."""
+    """The tree's ``(productVersion, version)``, or the fallback constants.
+
+    Both or neither: one alone would pair an old version with the current
+    product (or the reverse), and Serum migrates from the pair.
+    """
+    present = [k for k in ("productVersion", "version") if k in preset_cbor]
+    if len(present) == 1:
+        raise ValueError(f"preset has {present[0]} but not "
+                         f"{({'productVersion', 'version'} - set(present)).pop()}; set both or neither")
     product = preset_cbor.get("productVersion", PROCESSOR_PRODUCT_VERSION)
     version = preset_cbor.get("version", PROCESSOR_FORMAT_VERSION)
-    if not isinstance(product, str):
-        raise ValueError(f"preset productVersion {product!r} is not a string")
+    if not isinstance(product, str) or not product:
+        raise ValueError(f"preset productVersion {product!r} is not a non-empty string")
     if isinstance(version, bool) or not isinstance(version, (int, float)) or not 0 < version < 1e6:
         raise ValueError(f"preset version {version!r} is not a positive number")
     return product, float(version)

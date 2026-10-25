@@ -162,6 +162,14 @@ def test_missing_version_markers_fall_back_to_current():
     assert out["version"] == PROCESSOR_FORMAT_VERSION == 11.0
 
 
+@pytest.mark.parametrize("missing", ["version", "productVersion"])
+def test_one_version_marker_alone_rejected(missing):
+    inp = _minimal_preset_cbor()
+    del inp[missing]
+    with pytest.raises(ValueError, match=f"not {missing}; set both or neither"):
+        preset_cbor_to_processor_cbor(inp)
+
+
 def test_int_version_written_as_float():
     inp = _minimal_preset_cbor()
     inp["version"] = 4
@@ -172,7 +180,7 @@ def test_int_version_written_as_float():
 @pytest.mark.parametrize("key, value", [
     ("version", "4.0"), ("version", True), ("version", 0.0), ("version", -1.0),
     ("version", float("nan")), ("version", float("inf")), ("version", None),
-    ("productVersion", 2), ("productVersion", None),
+    ("productVersion", 2), ("productVersion", None), ("productVersion", ""),
 ])
 def test_bad_version_markers_rejected(key, value):
     inp = _minimal_preset_cbor()

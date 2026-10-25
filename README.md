@@ -138,7 +138,7 @@ default and `set_param` removes the field when you set the default. Wavetable
 position only applies to a wavetable oscillator: on a sample, multisample,
 granular or spectral oscillator both functions raise `ValueError`.
 
-## Targeting a different Serum build
+## Version markers
 
 The state keeps the preset's own `version` and `productVersion`, so Serum
 migrates an older preset exactly as it does when it opens the file itself.
