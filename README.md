@@ -140,6 +140,40 @@ default and `set_param` removes the field when you set the default. Wavetable
 position only applies to a wavetable oscillator: on a sample, multisample,
 granular or spectral oscillator both functions raise `ValueError`.
 
+### Oscillator type fields
+
+Fields that only exist for one oscillator type aren't in `PARAMS`; edit them
+in `plainParams` directly, in stored units. Each oscillator `OscillatorN`
+(A is 0, B is 1, C is 2) keeps a submodule for every type, and only the one
+matching its `kParamType` (absent means `kOsc_WT`) has any effect:
+`WTOsc{N}`, `MultiSampleOsc{N}`, `GranularOsc{N}` or `SpectralOsc{N}`. The
+sample type has no fields of its own beyond warp. Measured on oscillator A in
+Serum 2.1.5, 30 norms per field (`n` is the host knob, 0 to 1):
+
+| Submodule | Field | Stored value | Default |
+|---|---|---|---|
+| `WTOsc` | `kParamUnisonWTPos` | -100 + 200n | 0 |
+| `WTOsc` | `kParamInitialPhase` | 360n (degrees) | 180 |
+| `WTOsc` | `kParamRandomPhase` | 100n | 100 |
+| `MultiSampleOsc` | `kParamTimbreShift` | -64 + 128n | 0 |
+| `MultiSampleOsc` | `kParamRandomPhase` | 100n | 0 |
+| `MultiSampleOsc` | `kParamEnvOverride` | 1.0 from n = 0.5, else 0.0 | 0.0 |
+| `MultiSampleOsc` | `kParamEnvDelay` | 8n⁵ seconds | 0 |
+| `MultiSampleOsc` | `kParamEnvAttack`, `kParamEnvDecay`, `kParamEnvRelease` | 32n⁵ seconds | decay 1.0; attack and release not determined |
+| `MultiSampleOsc` | `kParamEnvSustain` | n | 1.0 |
+| `GranularOsc` | `kParamDensity` | 1000n⁴ (shown as 30n grains) | 3.90625 |
+| `GranularOsc` | `kParamGrainLength` | 10n⁴ seconds | 0.625 |
+| `GranularOsc` | `kParamGrainReverse` | 1.0 from n = 0.5, else 0.0 | 0.0 |
+| `GranularOsc` | `kParamWindowParam` | 100n | 100 |
+| `SpectralOsc` | `kParamSpecFltShift` | -100 + 200n | 0 |
+| `SpectralOsc` | `kParamSpecFltWetDry` | 100n | 100 |
+| `SpectralOsc` | `kParamFreqLo`, `kParamFreqHi` | 10 · 2205ⁿ Hz | 10 and 22050 |
+
+These defaults are the values Serum leaves out of the file; the host's
+`defaultValue` for the same slot describes the wavetable meaning and is wrong
+for most of them. Granular density and grain length were measured in their
+default (non-BPM) mode, and oscillators B and C are assumed to match A.
+
 ## Version markers
 
 The state keeps the preset's own `version` and `productVersion`, so Serum
