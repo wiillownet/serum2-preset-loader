@@ -13,3 +13,7 @@ release notes.
   unchanged. Before, a state built with the loader lost both. A preset without
   them gets neither key, which matches what Serum 2.1.5 writes in its own save.
   The processor state and `convert_*` output are unchanged.
+
+### Changed
+
+- CI now runs the tests on macOS and Windows as well as Linux.
