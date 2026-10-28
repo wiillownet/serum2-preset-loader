@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import os
 import struct
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -86,7 +87,7 @@ def test_controller_module_shapes():
 def test_controller_metadata_and_versions():
     blob = build_controller_state(_tree(), "/some/Tiny.SerumPreset")
     meta, state = _decode(blob)
-    assert state["selectedPresetPath"] == "/some/Tiny.SerumPreset"
+    assert state["selectedPresetPath"] == os.path.abspath("/some/Tiny.SerumPreset")
     _m, rel = _decode(build_controller_state(_tree(), Path("rel") / "Tiny.SerumPreset"))
     assert rel["selectedPresetPath"] == str(Path.cwd() / "rel" / "Tiny.SerumPreset")
     _m, home = _decode(build_controller_state(_tree(), "~/Tiny.SerumPreset"))

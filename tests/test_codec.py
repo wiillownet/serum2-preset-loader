@@ -379,7 +379,7 @@ def test_bytes_path_frees_decoded_tree_before_compression(preset_bytes, monkeypa
 def test_readme_examples_run(tmp_path):
     """The README's two code examples, run against the fixture."""
     import re
-    readme = (Path(__file__).parent.parent / "README.md").read_text()
+    readme = (Path(__file__).parent.parent / "README.md").read_text(encoding="utf-8")
     section = readme[readme.index("## Reading and writing presets"):readme.index("## Parameters")]
     blocks = re.findall(r"```python\n(.*?)```", section, re.S)
     assert len(blocks) == 2
@@ -423,7 +423,12 @@ def test_concurrent_writers_never_leave_a_corrupt_file(preset_bytes, tmp_path):
         th.start()
     for th in threads:
         th.join()
-    assert errors == []
+    # Windows refuses to replace a file another writer is replacing (the
+    # docstring says so); the file must still never be left corrupt.
+    if os.name == "nt":
+        assert all(isinstance(e, PermissionError) for e in errors)
+    else:
+        assert errors == []
     h, t = decode_preset_file(path)        # a complete, valid preset
     assert h["presetName"] == t["presetName"] and h["presetName"].startswith("w")
     assert sorted(p.name for p in tmp_path.iterdir()) == ["shared.SerumPreset"]
