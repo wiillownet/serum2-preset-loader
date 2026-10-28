@@ -16,6 +16,7 @@ import math
 import numbers
 import os
 import struct
+import warnings
 from types import MappingProxyType
 from typing import Any, Mapping
 
@@ -83,6 +84,105 @@ def _matches_prefix_with_index(key: str, prefix: str) -> bool:
     return key.startswith(prefix) and key[len(prefix):].isdigit()
 
 
+class InvalidFXTypeError(ValueError):
+    """An FX entry has no ``type``, or one outside 0 to 15.
+
+    Serum 2.1.5 crashes the host when it loads such a state, so no state is
+    built. Dropping the entry instead would shift every later FX's index,
+    which ``proxyParams`` links refer to.
+    """
+
+
+# Parameter-table length of each FX type (Distortion, Flanger, Phaser, Chorus,
+# Delay, Comp, Reverb, EQ, Filter, HyperD, Bode, Convolve, Utils, Split,
+# Split3, SplitMS), indexed by the FX entry's `type`. From the Serum 2 study
+# (serum-spec 10 section 16.9, 01 section 5); a proxy's paramIndex must be
+# below it.
+_FX_PARAM_COUNTS: tuple[int, ...] = (11, 9, 12, 12, 14, 35, 16, 10, 13, 10, 15, 12, 11, 7, 10, 6)
+_PROXY_SLOTS: frozenset[str] = frozenset(str(i) for i in range(16))
+
+
+def _serum_int(value: Any) -> int | None:
+    """The int Serum reads from a stored number, or None where its read throws.
+
+    An integer keeps its low 32 bits, a float truncates toward zero and a bool
+    reads as 1 or 0. NaN, infinities and integers CBOR can't hold as one
+    (bignums) are None: Serum's reading of them was not measured.
+    """
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int) and -2 ** 63 <= value < 2 ** 64:
+        value &= 0xFFFFFFFF
+        return value - 2 ** 32 if value >= 2 ** 31 else value
+    if isinstance(value, float) and math.isfinite(value):
+        return int(value)   # out of int32 range fails every range check anyway
+    return None
+
+
+def _fx_types(rack: str, module: dict) -> list[int]:
+    """The type of each FX in a rack, in order; raises InvalidFXTypeError."""
+    fxs = module.get("FX")
+    if not isinstance(fxs, list):
+        return []
+    types = []
+    for i, fx in enumerate(fxs):
+        raw = fx.get("type") if isinstance(fx, dict) else None
+        t = _serum_int(raw)
+        if t is None or not 0 <= t < len(_FX_PARAM_COUNTS):
+            what = "has no type" if raw is None else f"has type {raw!r:.60}, not 0 to 15"
+            raise InvalidFXTypeError(f"{rack} FX[{i}] {what}; Serum crashes loading it")
+        types.append(t)
+    return types
+
+
+def _check_fx_types(tree: dict) -> None:
+    for key, module in tree.items():
+        if isinstance(module, dict) and _matches_prefix_with_index(key, "FXRack"):
+            _fx_types(key, module)
+
+
+def _valid_proxies(rack: str, proxies: Any, fx_types: list[int]) -> dict | None:
+    """``proxyParams`` without the entries Serum ignores or crashes on.
+
+    Each dropped entry gets a warning. Kept entries are the stored objects,
+    unchanged. None if ``proxyParams`` itself is not a map.
+    """
+    def drop(where: str, why: str) -> None:
+        # stacklevel: drop, _valid_proxies, _controller_fx_rack, build_controller_state
+        warnings.warn(f"{rack} proxyParams{where} dropped: {why}", stacklevel=5)
+
+    if not isinstance(proxies, dict):
+        drop("", f"a {type(proxies).__name__}, not a map, which Serum ignores")
+        return None
+    out = {}
+    for slot, entry in proxies.items():
+        where = f" slot {slot!r:.20}"
+        if slot not in _PROXY_SLOTS:
+            drop(where, 'not one of "0" to "15", which Serum ignores')
+            continue
+        if not fx_types:
+            drop(where, "the rack has no FX, so Serum ignores its proxyParams")
+            continue
+        if not isinstance(entry, dict):
+            drop(where, f"a {type(entry).__name__}, not a map, which crashes the host")
+            continue
+        fx_id, index = _serum_int(entry.get("fxID")), _serum_int(entry.get("paramIndex"))
+        if fx_id is None or index is None:
+            name = "fxID" if fx_id is None else "paramIndex"
+            what = "is missing" if name not in entry else f"{entry[name]!r:.60} is not a number"
+            drop(where, f"{name} {what}, which crashes the host")
+        elif not 0 <= fx_id < len(fx_types):
+            drop(where, f"fxID {fx_id} is outside 0 to {len(fx_types) - 1} (the rack has "
+                        f"{len(fx_types)} FX), which crashes the host")
+        elif not 0 <= index < _FX_PARAM_COUNTS[fx_types[fx_id]]:
+            count = _FX_PARAM_COUNTS[fx_types[fx_id]]
+            drop(where, f"paramIndex {index} is outside 0 to {count - 1} (FX {fx_id} is type "
+                        f"{fx_types[fx_id]}), which crashes the host")
+        else:
+            out[slot] = entry
+    return out
+
+
 _CONTAINERS = frozenset({dict, list})
 
 
@@ -123,6 +223,7 @@ def _strip_preset_only_subkeys(state: dict) -> None:
 def preset_cbor_to_processor_cbor(preset_cbor: dict) -> dict:
     """Pure dict-to-dict transformation. Does not touch wrappers."""
     markers = _version_markers(preset_cbor)    # before the expensive copy
+    _check_fx_types(preset_cbor)
     state = _copy_expanding_plainparams(preset_cbor)
     for k in _PRESET_ONLY_TOPLEVEL_KEYS:
         state.pop(k, None)
@@ -230,7 +331,8 @@ def build_processor_state(preset_dict: dict) -> bytes:
     These are the XferJson bytes a DAW stores as the plugin's processor state,
     the part :func:`convert_preset_tree` wraps for DawDreamer. Pair it with
     :func:`build_controller_state` when writing a DAW project. The tree is
-    not modified.
+    not modified. An FX entry without a valid ``type`` raises
+    :class:`InvalidFXTypeError`, here and in ``convert_*``.
     """
     if not isinstance(preset_dict, dict):
         raise TypeError(f"preset tree must be a dict, got {type(preset_dict).__name__}")
@@ -284,9 +386,11 @@ def build_controller_state(
     Holds what a host shows rather than plays: the preset name, author and
     description, macro names and their preset values, clip names, UI panel
     settings, and each FX's preset values (what a double-click resets to).
-    It also carries the preset's ``midiMap`` and each FX rack's
-    ``proxyParams`` as they are; like Serum's own save, it leaves a key out
-    when the preset has none. Without it, Serum in a DAW shows "Init" and default macro names. Text
+    It also carries the preset's ``midiMap`` as it is, and each FX rack's
+    ``proxyParams`` without the entries Serum ignores or crashes the host on
+    (each dropped entry gets a warning); like Serum's own save, it leaves a key
+    out when the preset has none. An FX entry without a valid ``type`` raises
+    :class:`InvalidFXTypeError`. Without it, Serum in a DAW shows "Init" and default macro names. Text
     valued FX fields are left out of the reset values, which Serum then takes
     from its own defaults. ``preset_path``, if given, is stored as an
     absolute ``selectedPresetPath`` (``~`` expanded); for a user preset that
@@ -314,7 +418,7 @@ def build_controller_state(
         elif _matches_prefix_with_index(key, "ArpClip"):
             state[key] = {}
         elif _matches_prefix_with_index(key, "FXRack"):
-            state[key] = _controller_fx_rack(module)
+            state[key] = _controller_fx_rack(key, module)
         elif _matches_prefix_with_index(key, "LFO"):
             name = module.get("curveDisplayName")
             state[key] = None if name is None else {"curveDisplayName": name}
@@ -361,14 +465,15 @@ def _controller_macro(module: dict) -> dict:
     return out
 
 
-def _controller_fx_rack(module: dict) -> dict:
+def _controller_fx_rack(rack: str, module: dict) -> dict:
     out: dict[str, Any] = {"displayName": module.get("displayName", "")}
-    fxs = module.get("FX")
-    if isinstance(fxs, list) and fxs:
-        # One entry per slot, even a malformed one, so later FX keep their index.
-        out["FX"] = [_controller_fx(fx if isinstance(fx, dict) else {}) for fx in fxs]
+    fx_types = _fx_types(rack, module)    # every FX entry is a map with a type
+    if fx_types:
+        out["FX"] = [_controller_fx(fx) for fx in module["FX"]]
     if "proxyParams" in module:
-        out["proxyParams"] = module["proxyParams"]
+        proxies = _valid_proxies(rack, module["proxyParams"], fx_types)
+        if proxies is not None:
+            out["proxyParams"] = proxies
     return out
 
 
