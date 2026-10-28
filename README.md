@@ -208,7 +208,13 @@ controller = build_controller_state(tree)  # XferJson bytes
 Without the controller state, Serum in the DAW plays the preset but shows
 "Init" and default macro names. With it, Serum shows the preset's name,
 author, description, macro names and clip names, and a double-click on an FX
-knob resets to the preset's value. Checked against Live 12's saved state
+knob resets to the preset's value. The controller state also carries the
+preset's MIDI CC map (`midiMap`) and each FX rack's links from the 48 "FX
+Main/Bus Param" host parameters to FX knobs (`proxyParams`), copied
+unchanged. A preset with neither gets neither key, as in Serum's own save.
+One caveat: Serum drops a
+host value sent to a proxy parameter in the first audio block after a state
+load, so set it after one block has been processed. Checked against Live 12's saved state
 under Serum 2.1.5: after Serum loads and re-saves it, the controller state
 matches Live's except for FX fields stored as text (an FX mode such as
 `kParamMode: "Normal"`), whose double-click target falls back to Serum's

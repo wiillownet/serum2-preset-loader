@@ -270,7 +270,7 @@ def _processor_state(holder: list) -> bytes:
 _CONTROLLER_TOPLEVEL_KEYS: tuple[str, ...] = (
     "ClipPlayer", "Filter", "SerumGUI",
     "GranularOsc", "MultiSampleOsc", "Osc", "SpectralOsc", "WTOsc",
-    "arpBankDisplayName", "clipBankDisplayName",
+    "arpBankDisplayName", "clipBankDisplayName", "midiMap",
     "presetName", "presetAuthor", "presetDescription",
     "product", "url", "vendor",
 )
@@ -284,7 +284,9 @@ def build_controller_state(
     Holds what a host shows rather than plays: the preset name, author and
     description, macro names and their preset values, clip names, UI panel
     settings, and each FX's preset values (what a double-click resets to).
-    Without it, Serum in a DAW shows "Init" and default macro names. Text
+    It also carries the preset's ``midiMap`` and each FX rack's
+    ``proxyParams`` as they are; like Serum's own save, it leaves a key out
+    when the preset has none. Without it, Serum in a DAW shows "Init" and default macro names. Text
     valued FX fields are left out of the reset values, which Serum then takes
     from its own defaults. ``preset_path``, if given, is stored as an
     absolute ``selectedPresetPath`` (``~`` expanded); for a user preset that
@@ -365,6 +367,8 @@ def _controller_fx_rack(module: dict) -> dict:
     if isinstance(fxs, list) and fxs:
         # One entry per slot, even a malformed one, so later FX keep their index.
         out["FX"] = [_controller_fx(fx if isinstance(fx, dict) else {}) for fx in fxs]
+    if "proxyParams" in module:
+        out["proxyParams"] = module["proxyParams"]
     return out
 
 

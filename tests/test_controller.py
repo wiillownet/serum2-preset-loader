@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import os
 import struct
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -86,7 +87,7 @@ def test_controller_module_shapes():
 def test_controller_metadata_and_versions():
     blob = build_controller_state(_tree(), "/some/Tiny.SerumPreset")
     meta, state = _decode(blob)
-    assert state["selectedPresetPath"] == "/some/Tiny.SerumPreset"
+    assert state["selectedPresetPath"] == os.path.abspath("/some/Tiny.SerumPreset")
     _m, rel = _decode(build_controller_state(_tree(), Path("rel") / "Tiny.SerumPreset"))
     assert rel["selectedPresetPath"] == str(Path.cwd() / "rel" / "Tiny.SerumPreset")
     _m, home = _decode(build_controller_state(_tree(), "~/Tiny.SerumPreset"))
@@ -173,3 +174,52 @@ def test_readme_example_runs(tmp_path, monkeypatch):
     exec(compile(block, "README", "exec"), scope)
     assert _decode(scope["processor"])[0]["component"] == "processor"
     assert "selectedPresetPath" not in _decode(scope["controller"])[1]
+
+
+# Serum's own saves: one entry per CC, a CC can drive several parameters; a
+# later duplicate ccNum wins and an out-of-range one is skipped, so pass both
+# through for Serum to resolve.
+MIDI_MAP = [
+    {"ccNum": 15, "paramIDs": [7001000]},
+    {"ccNum": 14, "paramIDs": [7000000, 7002000, 1004006]},
+    {"ccNum": 15, "paramIDs": [7003000]},
+    {"ccNum": 200, "paramIDs": [7004000]},
+]
+PROXIES = {"0": {"fxID": 1, "paramIndex": 10}, "15": {"fxID": 0, "paramIndex": 2}}
+
+
+def test_midimap_copied():
+    tree = _tree()
+    tree["midiMap"] = copy.deepcopy(MIDI_MAP)
+    _meta, state = _decode(build_controller_state(tree))
+    assert state["midiMap"] == MIDI_MAP
+    assert "proxyParams" not in state["FXRack0"]
+
+
+def test_proxies_copied():
+    tree = _tree()
+    tree["FXRack0"]["proxyParams"] = copy.deepcopy(PROXIES)
+    tree["FXRack1"]["proxyParams"] = {"3": {"fxID": 0, "paramIndex": 0}}
+    _meta, state = _decode(build_controller_state(tree))
+    assert state["FXRack0"]["proxyParams"] == PROXIES
+    assert list(state["FXRack0"]["proxyParams"]) == ["0", "15"]
+    assert state["FXRack1"] == {"displayName": "", "proxyParams": {"3": {"fxID": 0, "paramIndex": 0}}}
+    assert "midiMap" not in state
+
+
+def test_neither_left_out():
+    # Serum's own save leaves both keys out when nothing is mapped
+    _meta, state = _decode(build_controller_state(_tree()))
+    assert "midiMap" not in state
+    assert not any("proxyParams" in v for k, v in state.items() if k.startswith("FXRack"))
+
+
+def test_roundtrip():
+    from serum2_preset_loader import decode_preset_bytes, encode_preset
+    header, tree = decode_preset_file(PRESET)
+    tree["midiMap"] = copy.deepcopy(MIDI_MAP)
+    tree["FXRack0"]["proxyParams"] = copy.deepcopy(PROXIES)
+    _h, again = decode_preset_bytes(encode_preset(header, tree))
+    _meta, state = _decode(build_controller_state(again))
+    assert state["midiMap"] == again["midiMap"] == MIDI_MAP
+    assert state["FXRack0"]["proxyParams"] == again["FXRack0"]["proxyParams"] == PROXIES
