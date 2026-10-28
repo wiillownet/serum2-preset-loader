@@ -209,9 +209,17 @@ Without the controller state, Serum in the DAW plays the preset but shows
 "Init" and default macro names. With it, Serum shows the preset's name,
 author, description, macro names and clip names, and a double-click on an FX
 knob resets to the preset's value. The controller state also carries the
-preset's MIDI CC map (`midiMap`) and each FX rack's links from the 48 "FX
-Main/Bus Param" host parameters to FX knobs (`proxyParams`), copied
-unchanged. A preset with neither gets neither key, as in Serum's own save.
+preset's MIDI CC map (`midiMap`), copied unchanged, and each FX rack's
+links from the 48 "FX Main/Bus Param" host parameters to FX knobs
+(`proxyParams`). A preset with neither gets neither key, as in Serum's own
+save. Proxy links are checked first, because Serum 2.1.5 crashes the host on
+some malformed ones: an entry is kept, exactly as stored, only if its slot is
+`"0"` to `"15"`, its `fxID` names an FX in that rack and its `paramIndex` is
+below that FX type's parameter count. Every other entry is dropped with a
+Python warning naming the rack, slot and reason. An FX entry with no `type`,
+or one outside 0 to 15, also crashes Serum, so `build_controller_state`,
+`build_processor_state` and `convert_*` raise `InvalidFXTypeError` (a
+`ValueError`) for it rather than drop it and shift every later FX's index.
 One caveat: Serum drops a
 host value sent to a proxy parameter in the first audio block after a state
 load, so set it after one block has been processed. Checked against Live 12's saved state
