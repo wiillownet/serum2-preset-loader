@@ -4,6 +4,22 @@ Notable changes to serum2-preset-loader. Versions follow the policy in
 `docs/decisions.md`. Releases before 0.5.1 are described in their GitHub
 release notes.
 
+## [0.6.1] - 2026-11-04
+
+### Fixed
+
+- `build_processor_state`, `convert_*` and `preset_cbor_to_processor_cbor` now
+  leave out the file's `mpePitchBendRange` too, unless `keep_mpe=True`. Serum's
+  own editor load keeps the instance's range, like `mpeEnabled` and `mpeConfig`,
+  so a file with another value left Serum in a state its own load doesn't.
+  Serum 2.1.5 reads a state without the key as range 48.
+
+The bytes change for every preset that has the key. Over the 777 presets
+installed here (626 Factory, 149 Splice, 2 User), all with range 48, the only
+change is the key's removal: the output equals 0.6.0's on the tree without the
+key, `keep_mpe=True` and controller states give the same bytes as 0.6.0, and a
+sample of 30 loaded into Serum re-saved the same state with range 48.
+
 ## [0.6.0] - 2026-11-04
 
 ### Changed

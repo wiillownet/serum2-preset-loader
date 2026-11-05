@@ -420,18 +420,17 @@ def _mpe_tree() -> dict:
 
 def test_mpe_left_out_by_default():
     _meta, state = _decode(build_processor_state(_mpe_tree()))
-    assert "mpeEnabled" not in state and "mpeConfig" not in state
-    assert state["mpePitchBendRange"] == 24
+    assert not {"mpeEnabled", "mpeConfig", "mpePitchBendRange"} & set(state)
 
 
 def test_mpe_opt_in():
     _meta, state = _decode(build_processor_state(_mpe_tree(), keep_mpe=True))
-    assert state["mpeEnabled"] is True and state["mpeConfig"] == 1
+    assert state["mpeEnabled"] is True and state["mpeConfig"] == 1 and state["mpePitchBendRange"] == 24
 
 
 def test_mpe_every_entry_point(tmp_path):
     header, tree = decode_preset_file(PRESET)
-    tree.update(mpeEnabled=True, mpeConfig=1)
+    tree.update(mpeEnabled=True, mpeConfig=1, mpePitchBendRange=24)
     data = encode_preset(dict(header, mpeEnabled=True, mpeConfig=1), tree)
     path = tmp_path / "p.SerumPreset"
     path.write_bytes(data)
@@ -441,10 +440,10 @@ def test_mpe_every_entry_point(tmp_path):
         lambda **kw: convert_preset_tree(tree, **kw),
     ]
     for call in calls:
-        assert "mpeEnabled" not in _from_juce(call())
+        assert not {"mpeEnabled", "mpePitchBendRange"} & set(_from_juce(call()))
         kept = _from_juce(call(keep_mpe=True))
-        assert kept["mpeEnabled"] is True and kept["mpeConfig"] == 1
-    assert "mpeEnabled" not in preset_cbor_to_processor_cbor(tree)
+        assert kept["mpeEnabled"] is True and kept["mpeConfig"] == 1 and kept["mpePitchBendRange"] == 24
+    assert "mpePitchBendRange" not in preset_cbor_to_processor_cbor(tree)
     assert preset_cbor_to_processor_cbor(tree, keep_mpe=True)["mpeConfig"] == 1
     # The caller's tree still has its values.
     assert tree["mpeEnabled"] is True

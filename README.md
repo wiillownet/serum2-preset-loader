@@ -400,13 +400,13 @@ attempts and the probes used to diff the two formats — see
   which opening the preset in Serum's browser doesn't do. They can't be
   turned off from the state, and stamping 11.0 instead would skip Serum's
   migration.
-- `build_processor_state` and `convert_*` leave out the file's `mpeEnabled` and
-  `mpeConfig`, because Serum's own editor load doesn't take them from the file
-  either. Serum 2.1.5 reads a state without them as MPE off and config 0, even
-  on an instance that had MPE on, so a host that wants MPE must turn it on
-  after the load. To keep the file's values, pass `keep_mpe=True` to any of
-  these functions or to `preset_cbor_to_processor_cbor`. `mpePitchBendRange` is
-  still copied from the file.
+- `build_processor_state` and `convert_*` leave out the file's `mpeEnabled`,
+  `mpeConfig` and `mpePitchBendRange`, because Serum's own editor load doesn't
+  take them from the file either: it keeps the instance's values. Serum 2.1.5
+  reads a state without them as MPE off, config 0 and range 48, even on an
+  instance that had other values, so a host that wants MPE must set it after
+  the load. To keep the file's values, pass `keep_mpe=True` to any of these
+  functions or to `preset_cbor_to_processor_cbor`.
 - If a future Serum version changes the schema, the converter may need new
   mappings; `docs/DERIVATION.md` describes how to re-derive them.
 - Per-instance audio randomization (unison detune phase, sample start, etc.)
