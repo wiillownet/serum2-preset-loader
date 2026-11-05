@@ -152,3 +152,13 @@ Text fields that aren't strings and macro values outside 0 to 100 raise `ValueEr
 **Alternatives considered:** Normalizing kept entries to plain integers (changes bytes of presets Serum accepts as they are). Raising on any invalid proxy (one bad link would block a preset that otherwise loads). Dropping an FX entry with a bad type (shifts later FX indexes).
 
 **Revisit if:** a later Serum catches these errors itself, changes an FX type's parameter count, or adds an FX type.
+
+## [2026-11-04] Carry the author lock in the controller state; leave the file's MPE values out
+
+**Decision:** `build_controller_state` takes a keyword-only `header` and writes `presetAuthorLocked` from it (or from the tree's root when the header has none or isn't given) into the controller state and its metadata, leaving the key out when the file has no flag. `convert_*` stays processor-only, as decided 2026-10-25. `build_processor_state`, `convert_*` and `preset_cbor_to_processor_cbor` drop `mpeEnabled` and `mpeConfig` unless called with `keep_mpe=True`. Ships as 0.6.0, since output changes for existing callers.
+
+**Reason:** The Serum 2 study (`final_loader_check.json`, `final_part2_pack.json`, serum-spec 14 section 6) found that a packed preset's lock is in the file's header only, and that Serum keeps it in the controller state and metadata after a load; the loader lost it. The study also found that the state took `mpeEnabled` from the file while Serum's editor load does not. Local check (2026-11-04, Serum 2.1.5, pedalboard 0.9.26, no editor): a state without the two keys reads back `mpeEnabled` false and `mpeConfig` 0, on a fresh instance and on one a previous state had set to true and 1. So leaving them out gives the defaults, not the instance's previous value: the README says this rather than "comes from the host". The result matches Serum's editor load on an instance with MPE off, which is every fresh host instance.
+
+**Alternatives considered:** Returning a controller state from `convert_preset_file` (a return-type change for every caller, and rendering doesn't need it). Copying the lock into the tree at decode (changes what `encode_preset` writes back). Making `keep_mpe` the default (keeps the mismatch with Serum's load for existing callers).
+
+**Revisit if:** a later Serum keeps the instance's MPE on a state without the keys, or moves the lock out of the controller state.

@@ -44,6 +44,11 @@ _PRESET_ONLY_TOPLEVEL_KEYS: frozenset[str] = frozenset({
     "fileType", "presetName", "presetAuthor", "presetDescription",
 })
 
+# Left out of the processor state unless the caller asks for the file's values:
+# they describe the instance the preset was saved from, not the patch. Serum 2.1.5
+# reads a state without them as off and 0 (see README, "Caveats").
+_FILE_MPE_KEYS: tuple[str, ...] = ("mpeEnabled", "mpeConfig")
+
 _PROCESSOR_EXTRA_TOPLEVEL: Mapping[str, Any] = MappingProxyType({
     "component": "processor",
 })
@@ -220,14 +225,20 @@ def _strip_preset_only_subkeys(state: dict) -> None:
                     value.pop(dk, None)
 
 
-def preset_cbor_to_processor_cbor(preset_cbor: dict) -> dict:
-    """Pure dict-to-dict transformation. Does not touch wrappers."""
+def preset_cbor_to_processor_cbor(preset_cbor: dict, *, keep_mpe: bool = False) -> dict:
+    """Pure dict-to-dict transformation. Does not touch wrappers.
+
+    ``mpeEnabled`` and ``mpeConfig`` are left out unless ``keep_mpe`` is true.
+    """
     markers = _version_markers(preset_cbor)    # before the expensive copy
     _check_fx_types(preset_cbor)
     state = _copy_expanding_plainparams(preset_cbor)
     for k in _PRESET_ONLY_TOPLEVEL_KEYS:
         state.pop(k, None)
     _strip_preset_only_subkeys(state)
+    if not keep_mpe:
+        for k in _FILE_MPE_KEYS:
+            state.pop(k, None)
     state.update(_PROCESSOR_EXTRA_TOPLEVEL)
     # Every Arp<n> module gets a default `activeClip: 0` if the preset doesn't
     # carry one. Hardcoding `Arp0` would miss future Arp1+ modules.
@@ -296,25 +307,30 @@ def _validate_preset_filetype(meta: dict) -> None:
         )
 
 
-def convert_preset_bytes(preset_bytes: bytes) -> bytes:
-    """Convert raw .SerumPreset bytes to a DawDreamer-loadable VST3 state blob."""
+def convert_preset_bytes(preset_bytes: bytes, *, keep_mpe: bool = False) -> bytes:
+    """Convert raw .SerumPreset bytes to a DawDreamer-loadable VST3 state blob.
+
+    ``keep_mpe=True`` keeps the file's ``mpeEnabled`` and ``mpeConfig``, which
+    are left out by default.
+    """
     preset_meta, _format_version, preset_cbor_bytes = unwrap_xferjson(
         preset_bytes, expected_version=SUPPORTED_XFERJSON_VERSION
     )
     _validate_preset_filetype(preset_meta)
     holder = [_loads_cbor_tree(preset_cbor_bytes)]
     del preset_cbor_bytes
-    return _convert_owned_tree(holder)
+    return _convert_owned_tree(holder, keep_mpe)
 
 
-def convert_preset_tree(preset_dict: dict) -> bytes:
+def convert_preset_tree(preset_dict: dict, *, keep_mpe: bool = False) -> bytes:
     """Convert an already-decoded preset tree to a VST3 state blob.
 
     For edit-and-render loops: decode a preset once with
     :func:`decode_preset_file`, change fields in the tree, and convert each
     variant here without writing a ``.SerumPreset`` to disk. The tree is not
     modified. Output is identical to :func:`convert_preset_bytes` on a file
-    holding the same tree.
+    holding the same tree. ``keep_mpe=True`` keeps the tree's ``mpeEnabled``
+    and ``mpeConfig``, which are left out by default.
 
     The caller still holds the tree, so unlike :func:`convert_preset_bytes`
     it stays alive through compression: peak memory is higher on
@@ -322,33 +338,35 @@ def convert_preset_tree(preset_dict: dict) -> bytes:
     """
     if not isinstance(preset_dict, dict):
         raise TypeError(f"preset tree must be a dict, got {type(preset_dict).__name__}")
-    return _convert_owned_tree([preset_dict])
+    return _convert_owned_tree([preset_dict], keep_mpe)
 
 
-def build_processor_state(preset_dict: dict) -> bytes:
+def build_processor_state(preset_dict: dict, *, keep_mpe: bool = False) -> bytes:
     """The processor (VST3 IComponent) state for a decoded preset tree.
 
     These are the XferJson bytes a DAW stores as the plugin's processor state,
     the part :func:`convert_preset_tree` wraps for DawDreamer. Pair it with
     :func:`build_controller_state` when writing a DAW project. The tree is
     not modified. An FX entry without a valid ``type`` raises
-    :class:`InvalidFXTypeError`, here and in ``convert_*``.
+    :class:`InvalidFXTypeError`, here and in ``convert_*``. ``keep_mpe=True``
+    keeps the tree's ``mpeEnabled`` and ``mpeConfig``, which are left out by
+    default.
     """
     if not isinstance(preset_dict, dict):
         raise TypeError(f"preset tree must be a dict, got {type(preset_dict).__name__}")
-    return _processor_state([preset_dict])
+    return _processor_state([preset_dict], keep_mpe)
 
 
-def _convert_owned_tree(holder: list) -> bytes:
-    return build_juce_vst3_state(_processor_state(holder))
+def _convert_owned_tree(holder: list, keep_mpe: bool) -> bytes:
+    return build_juce_vst3_state(_processor_state(holder, keep_mpe))
 
 
-def _processor_state(holder: list) -> bytes:
+def _processor_state(holder: list, keep_mpe: bool) -> bytes:
     """Shared body. ``holder`` is a one-element list so this frame holds the
     only reference to the decoded tree. The processor tree shares its sample
     lists, so once ``proc_dict`` is deleted below, nothing keeps the decoded
     sample arrays alive during compression."""
-    proc_dict = preset_cbor_to_processor_cbor(holder.pop())
+    proc_dict = preset_cbor_to_processor_cbor(holder.pop(), keep_mpe=keep_mpe)
     markers = proc_dict["productVersion"], proc_dict["version"]
     proc_cbor = cbor2.dumps(proc_dict)
     # The decoded tree of a sample-based preset is ~2 GB of float objects;
@@ -378,8 +396,14 @@ _CONTROLLER_TOPLEVEL_KEYS: tuple[str, ...] = (
 )
 
 
+_AUTHOR_LOCK = "presetAuthorLocked"
+
+
 def build_controller_state(
-    preset_dict: dict, preset_path: str | os.PathLike[str] | None = None
+    preset_dict: dict,
+    preset_path: str | os.PathLike[str] | None = None,
+    *,
+    header: Mapping[str, Any] | None = None,
 ) -> bytes:
     """The controller (VST3 IEditController) state for a decoded preset tree.
 
@@ -397,9 +421,17 @@ def build_controller_state(
     includes the home directory, so leave it out of a project that will be
     shared. Uses the tree's own version markers, as
     :func:`build_processor_state` does. The tree is not modified.
+
+    ``header`` is the file's JSON header from :func:`decode_preset_file`. Pass
+    it for ``presetAuthorLocked``: a packed preset has that flag only in the
+    header, and a preset saved over by Serum has it in both places (the
+    header wins). A preset with no flag gets no key, as in Serum's own save.
+    A flag that isn't a bool raises ``ValueError``.
     """
     if not isinstance(preset_dict, dict):
         raise TypeError(f"preset tree must be a dict, got {type(preset_dict).__name__}")
+    if header is not None and not isinstance(header, Mapping):
+        raise TypeError(f"header must be a mapping, got {type(header).__name__}")
     product, version = _version_markers(preset_dict)
     for key in ("presetName", "presetAuthor", "presetDescription", "presetComment"):
         if key in preset_dict and not isinstance(preset_dict[key], str):
@@ -431,6 +463,12 @@ def build_controller_state(
         productVersion=product,
         version=version,
     )
+    lock_source = header if header is not None and _AUTHOR_LOCK in header else preset_dict
+    if _AUTHOR_LOCK in lock_source:
+        locked = lock_source[_AUTHOR_LOCK]
+        if not isinstance(locked, bool):
+            raise ValueError(f"preset {_AUTHOR_LOCK} {locked!r:.60} is not a bool")
+        state[_AUTHOR_LOCK] = locked
     if preset_path is not None:
         # Serum resolves it from the host's working directory, not the set's.
         state["selectedPresetPath"] = os.path.abspath(os.path.expanduser(os.fspath(preset_path)))
@@ -440,6 +478,7 @@ def build_controller_state(
         "component": "controller",
         "hash": hashlib.md5(compressed, usedforsecurity=False).hexdigest(),
         "presetAuthor": state.get("presetAuthor", ""),
+        **({_AUTHOR_LOCK: state[_AUTHOR_LOCK]} if _AUTHOR_LOCK in state else {}),
         "presetComment": state["presetComment"],
         "presetDescription": state.get("presetDescription", ""),
         "presetName": state.get("presetName", ""),
@@ -495,10 +534,14 @@ def _is_number(value: Any) -> bool:
     return isinstance(value, numbers.Real) and not isinstance(value, bool)
 
 
-def convert_preset_file(preset_path: str) -> bytes:
-    """Read a .SerumPreset from disk and return the VST3 state blob."""
+def convert_preset_file(preset_path: str, *, keep_mpe: bool = False) -> bytes:
+    """Read a .SerumPreset from disk and return the VST3 state blob.
+
+    ``keep_mpe=True`` keeps the file's ``mpeEnabled`` and ``mpeConfig``, which
+    are left out by default.
+    """
     with open(preset_path, "rb") as f:
-        return convert_preset_bytes(f.read())
+        return convert_preset_bytes(f.read(), keep_mpe=keep_mpe)
 
 
 def read_preset_metadata(preset_path: str) -> dict:
