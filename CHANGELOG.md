@@ -4,6 +4,28 @@ Notable changes to serum2-preset-loader. Versions follow the policy in
 `docs/decisions.md`. Releases before 0.5.1 are described in their GitHub
 release notes.
 
+## [0.6.0] - 2026-11-04
+
+### Changed
+
+- `build_processor_state`, `convert_*` and `preset_cbor_to_processor_cbor` no
+  longer write the file's `mpeEnabled` and `mpeConfig` into the processor
+  state, so output changes for every preset that has them. Serum 2.1.5 reads a
+  state without them as MPE off and config 0. Pass the new keyword `keep_mpe=True`
+  for the old output, byte for byte.
+
+### Added
+
+- `build_controller_state(tree, header=header)` carries `presetAuthorLocked`
+  from the file's header into the controller state and its metadata, as Serum
+  does. A packed preset has the flag only in the header, so callers need to
+  pass `header=`. Without it, a flag at the tree's root (a preset saved over by
+  Serum) is still carried. A preset with no flag gets the same bytes as before.
+
+Over the 777 presets installed here (none has the flag), `keep_mpe=True` gives
+the same bytes as 0.5.2, the default gives the bytes 0.5.2 gives with the two
+keys removed from the tree, and controller states are unchanged.
+
 ## [0.5.2] - 2026-10-28
 
 ### Fixed

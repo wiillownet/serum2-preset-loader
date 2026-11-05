@@ -16,9 +16,14 @@ from serum2_preset_loader import (
     build_controller_state,
     InvalidFXTypeError,
     build_processor_state,
+    convert_preset_bytes,
+    convert_preset_file,
     convert_preset_tree,
+    decode_preset_bytes,
     decode_preset_file,
+    encode_preset,
     juce_memoryblock_b64decode,
+    preset_cbor_to_processor_cbor,
     unwrap_xferjson,
 )
 
@@ -350,3 +355,102 @@ def test_fx_type_bounds_accepted():
 
 def test_invalid_fx_type_is_a_value_error():
     assert issubclass(InvalidFXTypeError, ValueError)
+
+
+# ─── presetAuthorLocked and the file's MPE values ─────────────────────────
+
+def _packed() -> tuple[dict, dict]:
+    """A preset as a pack writes it: the flag is in the header, not the tree."""
+    header, tree = decode_preset_file(PRESET)
+    header["presetAuthorLocked"] = True
+    return decode_preset_bytes(encode_preset(header, tree))
+
+
+def test_pack_lock_from_header():
+    header, tree = _packed()
+    assert "presetAuthorLocked" not in tree
+    meta, state = _decode(build_controller_state(tree, header=header))
+    assert state["presetAuthorLocked"] is True
+    assert meta["presetAuthorLocked"] is True
+    # Serum's metadata keeps its keys sorted.
+    assert [k for k in meta if k.startswith("preset")] == sorted(k for k in meta if k.startswith("preset"))
+
+
+def test_pack_lock_lost_without_header():
+    _header, tree = _packed()
+    _meta, state = _decode(build_controller_state(tree))
+    assert "presetAuthorLocked" not in state
+
+
+def test_lock_from_tree_root():
+    tree = dict(_tree(), presetAuthorLocked=True)
+    meta, state = _decode(build_controller_state(tree))
+    assert state["presetAuthorLocked"] is True and meta["presetAuthorLocked"] is True
+
+
+def test_header_lock_beats_tree():
+    tree = dict(_tree(), presetAuthorLocked=True)
+    meta, state = _decode(build_controller_state(tree, header={"presetAuthorLocked": False}))
+    assert state["presetAuthorLocked"] is False and meta["presetAuthorLocked"] is False
+
+
+def test_no_lock_same_bytes():
+    header, tree = decode_preset_file(PRESET)
+    assert "presetAuthorLocked" not in header
+    assert build_controller_state(tree, header=header) == build_controller_state(tree)
+    assert "presetAuthorLocked" not in _decode(build_controller_state(tree))[1]
+
+
+@pytest.mark.parametrize("bad", [1, "yes", None])
+def test_lock_not_bool(bad):
+    with pytest.raises(ValueError, match="presetAuthorLocked"):
+        build_controller_state(_tree(), header={"presetAuthorLocked": bad})
+    with pytest.raises(ValueError, match="presetAuthorLocked"):
+        build_controller_state(dict(_tree(), presetAuthorLocked=bad))
+
+
+def test_header_not_mapping():
+    with pytest.raises(TypeError, match="header"):
+        build_controller_state(_tree(), header=[])
+
+
+def _mpe_tree() -> dict:
+    return dict(_tree(), mpeEnabled=True, mpeConfig=1, mpePitchBendRange=24)
+
+
+def test_mpe_left_out_by_default():
+    _meta, state = _decode(build_processor_state(_mpe_tree()))
+    assert "mpeEnabled" not in state and "mpeConfig" not in state
+    assert state["mpePitchBendRange"] == 24
+
+
+def test_mpe_opt_in():
+    _meta, state = _decode(build_processor_state(_mpe_tree(), keep_mpe=True))
+    assert state["mpeEnabled"] is True and state["mpeConfig"] == 1
+
+
+def test_mpe_every_entry_point(tmp_path):
+    header, tree = decode_preset_file(PRESET)
+    tree.update(mpeEnabled=True, mpeConfig=1)
+    data = encode_preset(dict(header, mpeEnabled=True, mpeConfig=1), tree)
+    path = tmp_path / "p.SerumPreset"
+    path.write_bytes(data)
+    calls = [
+        lambda **kw: convert_preset_bytes(data, **kw),
+        lambda **kw: convert_preset_file(str(path), **kw),
+        lambda **kw: convert_preset_tree(tree, **kw),
+    ]
+    for call in calls:
+        assert "mpeEnabled" not in _from_juce(call())
+        kept = _from_juce(call(keep_mpe=True))
+        assert kept["mpeEnabled"] is True and kept["mpeConfig"] == 1
+    assert "mpeEnabled" not in preset_cbor_to_processor_cbor(tree)
+    assert preset_cbor_to_processor_cbor(tree, keep_mpe=True)["mpeConfig"] == 1
+    # The caller's tree still has its values.
+    assert tree["mpeEnabled"] is True
+
+
+def _from_juce(blob: bytes) -> dict:
+    xml_len = struct.unpack("<I", blob[4:8])[0]
+    root = ET.fromstring(blob[8:8 + xml_len].decode("utf-8"))
+    return _decode(juce_memoryblock_b64decode(root.findtext("IComponent")))[1]
