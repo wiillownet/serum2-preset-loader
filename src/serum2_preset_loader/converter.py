@@ -46,8 +46,8 @@ _PRESET_ONLY_TOPLEVEL_KEYS: frozenset[str] = frozenset({
 
 # Left out of the processor state unless the caller asks for the file's values:
 # they describe the instance the preset was saved from, not the patch. Serum 2.1.5
-# reads a state without them as off and 0 (see README, "Caveats").
-_FILE_MPE_KEYS: tuple[str, ...] = ("mpeEnabled", "mpeConfig")
+# reads a state without them as off, 0 and 48 (see README, "Caveats").
+_FILE_MPE_KEYS: tuple[str, ...] = ("mpeEnabled", "mpeConfig", "mpePitchBendRange")
 
 _PROCESSOR_EXTRA_TOPLEVEL: Mapping[str, Any] = MappingProxyType({
     "component": "processor",
@@ -228,7 +228,8 @@ def _strip_preset_only_subkeys(state: dict) -> None:
 def preset_cbor_to_processor_cbor(preset_cbor: dict, *, keep_mpe: bool = False) -> dict:
     """Pure dict-to-dict transformation. Does not touch wrappers.
 
-    ``mpeEnabled`` and ``mpeConfig`` are left out unless ``keep_mpe`` is true.
+    ``mpeEnabled``, ``mpeConfig`` and ``mpePitchBendRange`` are left out unless
+    ``keep_mpe`` is true.
     """
     markers = _version_markers(preset_cbor)    # before the expensive copy
     _check_fx_types(preset_cbor)
@@ -310,7 +311,8 @@ def _validate_preset_filetype(meta: dict) -> None:
 def convert_preset_bytes(preset_bytes: bytes, *, keep_mpe: bool = False) -> bytes:
     """Convert raw .SerumPreset bytes to a DawDreamer-loadable VST3 state blob.
 
-    ``keep_mpe=True`` keeps the file's ``mpeEnabled`` and ``mpeConfig``, which
+    ``keep_mpe=True`` keeps the file's ``mpeEnabled``, ``mpeConfig`` and
+    ``mpePitchBendRange``, which
     are left out by default.
     """
     preset_meta, _format_version, preset_cbor_bytes = unwrap_xferjson(
@@ -329,8 +331,8 @@ def convert_preset_tree(preset_dict: dict, *, keep_mpe: bool = False) -> bytes:
     :func:`decode_preset_file`, change fields in the tree, and convert each
     variant here without writing a ``.SerumPreset`` to disk. The tree is not
     modified. Output is identical to :func:`convert_preset_bytes` on a file
-    holding the same tree. ``keep_mpe=True`` keeps the tree's ``mpeEnabled``
-    and ``mpeConfig``, which are left out by default.
+    holding the same tree. ``keep_mpe=True`` keeps the tree's ``mpeEnabled``,
+    ``mpeConfig`` and ``mpePitchBendRange``, which are left out by default.
 
     The caller still holds the tree, so unlike :func:`convert_preset_bytes`
     it stays alive through compression: peak memory is higher on
@@ -349,7 +351,7 @@ def build_processor_state(preset_dict: dict, *, keep_mpe: bool = False) -> bytes
     :func:`build_controller_state` when writing a DAW project. The tree is
     not modified. An FX entry without a valid ``type`` raises
     :class:`InvalidFXTypeError`, here and in ``convert_*``. ``keep_mpe=True``
-    keeps the tree's ``mpeEnabled`` and ``mpeConfig``, which are left out by
+    keeps the tree's ``mpeEnabled``, ``mpeConfig`` and ``mpePitchBendRange``, which are left out by
     default.
     """
     if not isinstance(preset_dict, dict):
@@ -537,7 +539,8 @@ def _is_number(value: Any) -> bool:
 def convert_preset_file(preset_path: str, *, keep_mpe: bool = False) -> bytes:
     """Read a .SerumPreset from disk and return the VST3 state blob.
 
-    ``keep_mpe=True`` keeps the file's ``mpeEnabled`` and ``mpeConfig``, which
+    ``keep_mpe=True`` keeps the file's ``mpeEnabled``, ``mpeConfig`` and
+    ``mpePitchBendRange``, which
     are left out by default.
     """
     with open(preset_path, "rb") as f:

@@ -162,3 +162,13 @@ Text fields that aren't strings and macro values outside 0 to 100 raise `ValueEr
 **Alternatives considered:** Returning a controller state from `convert_preset_file` (a return-type change for every caller, and rendering doesn't need it). Copying the lock into the tree at decode (changes what `encode_preset` writes back). Making `keep_mpe` the default (keeps the mismatch with Serum's load for existing callers).
 
 **Revisit if:** a later Serum keeps the instance's MPE on a state without the keys, or moves the lock out of the controller state.
+
+## [2026-11-04] Leave the file's MPE bend range out too
+
+**Decision:** `mpePitchBendRange` joins `mpeEnabled` and `mpeConfig` in the keys the processor state leaves out unless `keep_mpe=True`. Released as 0.6.1, the number the owner chose.
+
+**Reason:** The Serum 2 study (`mpe_range.json`, serum-spec 14 5.8) read that Serum's loader takes all three keys behind one gate: the editor's `LoadJson` skips them, a host state applies them. A browser load of a file with range 5 left the instance at 48; a state built from it read back 5. A state without the key reads back 48, which is what a fresh instance holds.
+
+**Alternatives considered:** Writing the key only when it isn't 48, which keeps the bytes of every installed preset but special-cases a default and leaves the keyword meaning two things. A minor bump (0.7.0): the 2026-09-06 versioning policy reserves patches for no observable change, and the output bytes change here, but Serum's resulting state changes only for a file with another range, none installed.
+
+**Revisit if:** a later Serum's editor load takes the range from the file.
