@@ -4,7 +4,7 @@ Notable changes to serum2-preset-loader. Versions follow the policy in
 `docs/decisions.md`. Releases before 0.5.1 are described in their GitHub
 release notes.
 
-## [0.7.0] - Unreleased
+## [0.7.0] - 2026-11-25
 
 ### Removed
 
