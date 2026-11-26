@@ -180,3 +180,11 @@ Decision: Every statement in this repo about how Serum 2 reads a state now point
 Reason: This repo's claims about Serum should rest on what a host can observe, and a citation the reader can't open proves nothing to them. A host test is evidence anyone with Serum can rerun, and it fails if a later Serum changes the behaviour. Its 81 cases ran on 2026-11-25 with Serum 2.1.5 and DawDreamer 0.9.0 on macOS and all pass; the parameter counts were also confirmed a second way, from the defaults Serum saves for each FX type.
 Alternatives considered: Rewriting git history to drop the citations from old commits (breaks every clone, fork and release tag, and copies already made keep the text). Leaving the text as it was (keeps citations a reader can't open, with nothing they can check).
 Revisit if: a host path to Serum's browser load, or a packed preset of the owner's, becomes available to settle the three unverified claims; or a Serum update makes `tests/test_serum_host.py` fail.
+
+## 2026-11-26 — Drop Python 3.9
+Status: Accepted
+Confidence: High
+Decision: `requires-python` goes from `>=3.9` to `>=3.10`, 3.9 leaves the CI matrix and the classifiers, and the version becomes 0.7.0. No code changes: nothing in the package branches on the Python version, and the `from __future__ import annotations` imports and `typing` aliases still work on 3.10.
+Reason: GitHub's `ubuntu-latest` image moved to Ubuntu 26.04, which has no Python 3.9 for `actions/setup-python`, so the 3.9 job fails before it checks out the code, on every branch. 3.9 reached end of life in October 2025. A minor, not a patch, per the 2026-09-06 versioning policy, because it changes who can install the package; pip on 3.9 resolves to 0.6.1. serum-render requires 3.11 and pins `<0.7`, so it is unaffected until it widens that pin.
+Alternatives considered: Pinning the 3.9 jobs to an older Ubuntu image such as `ubuntu-24.04` (keeps 3.9 tested only until that image is retired, for a Python version that no longer gets security fixes; macOS and Windows runners would need the same treatment as they drop it).
+Revisit if: a caller needs 3.9, or the next Python leaves the runner images.

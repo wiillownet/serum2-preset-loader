@@ -4,6 +4,13 @@ Notable changes to serum2-preset-loader. Versions follow the policy in
 `docs/decisions.md`. Releases before 0.5.1 are described in their GitHub
 release notes.
 
+## [0.7.0] - Unreleased
+
+### Removed
+
+- Python 3.9 support. `requires-python` is now `>=3.10`, and CI tests 3.10 to
+  3.13. pip on 3.9 keeps installing 0.6.1.
+
 ## [0.6.1] - 2026-11-04
 
 ### Fixed
