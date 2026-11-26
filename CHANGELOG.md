@@ -9,10 +9,11 @@ release notes.
 ### Fixed
 
 - `build_processor_state`, `convert_*` and `preset_cbor_to_processor_cbor` now
-  leave out the file's `mpePitchBendRange` too, unless `keep_mpe=True`. Serum's
-  own editor load keeps the instance's range, like `mpeEnabled` and `mpeConfig`,
-  so a file with another value left Serum in a state its own load doesn't.
-  Serum 2.1.5 reads a state without the key as range 48.
+  leave out the file's `mpePitchBendRange` too, unless `keep_mpe=True`, like
+  `mpeEnabled` and `mpeConfig`. Serum's own editor load is believed to keep the
+  instance's range, so a file with another value would leave Serum in a state
+  its own load doesn't; that is not verified in a host. Serum 2.1.5 reads a
+  state without the key as range 48.
 
 The bytes change for every preset that has the key. Over the 777 presets
 installed here (626 Factory, 149 Splice, 2 User), all with range 48, the only
