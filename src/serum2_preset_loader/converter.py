@@ -92,17 +92,18 @@ def _matches_prefix_with_index(key: str, prefix: str) -> bool:
 class InvalidFXTypeError(ValueError):
     """An FX entry has no ``type``, or one outside 0 to 15.
 
-    Serum 2.1.5 crashes the host when it loads such a state, so no state is
-    built. Dropping the entry instead would shift every later FX's index,
+    Serum 2.1.5 crashes the host when such an entry has another FX after it
+    in the rack, and fails the load when the type isn't a number, so no state
+    is built. Dropping the entry instead would shift every later FX's index,
     which ``proxyParams`` links refer to.
     """
 
 
 # Parameter-table length of each FX type (Distortion, Flanger, Phaser, Chorus,
 # Delay, Comp, Reverb, EQ, Filter, HyperD, Bode, Convolve, Utils, Split,
-# Split3, SplitMS), indexed by the FX entry's `type`. From the Serum 2 study
-# (serum-spec 10 section 16.9, 01 section 5); a proxy's paramIndex must be
-# below it.
+# Split3, SplitMS), indexed by the FX entry's `type`. Serum 2.1.5 saves this
+# many defaults for each FX it creates, and a proxy's paramIndex must be below
+# it: one at the count crashes the host (tests/test_serum_host.py).
 _FX_PARAM_COUNTS: tuple[int, ...] = (11, 9, 12, 12, 14, 35, 16, 10, 13, 10, 15, 12, 11, 7, 10, 6)
 _PROXY_SLOTS: frozenset[str] = frozenset(str(i) for i in range(16))
 
@@ -135,7 +136,7 @@ def _fx_types(rack: str, module: dict) -> list[int]:
         t = _serum_int(raw)
         if t is None or not 0 <= t < len(_FX_PARAM_COUNTS):
             what = "has no type" if raw is None else f"has type {raw!r:.60}, not 0 to 15"
-            raise InvalidFXTypeError(f"{rack} FX[{i}] {what}; Serum crashes loading it")
+            raise InvalidFXTypeError(f"{rack} FX[{i}] {what}; Serum can crash loading it")
         types.append(t)
     return types
 
@@ -425,9 +426,9 @@ def build_controller_state(
     :func:`build_processor_state` does. The tree is not modified.
 
     ``header`` is the file's JSON header from :func:`decode_preset_file`. Pass
-    it for ``presetAuthorLocked``: a packed preset has that flag only in the
-    header, and a preset saved over by Serum has it in both places (the
-    header wins). A preset with no flag gets no key, as in Serum's own save.
+    it for ``presetAuthorLocked``, which is read from the header first and
+    from the tree when the header has none. A preset with no flag gets no
+    key, as in Serum's own save.
     A flag that isn't a bool raises ``ValueError``.
     """
     if not isinstance(preset_dict, dict):
