@@ -396,13 +396,15 @@ attempts and the probes used to diff the two formats — see
 ## Caveats
 
 - Serum loads a state older than version 11.0 (any preset saved before
-  2.1.5) with `noteOnExpressionCompat` and `roundingModeCompat` switched on,
-  which opening the preset in Serum's browser doesn't do. They can't be
+  2.1.5) with `noteOnExpressionCompat` and `roundingModeCompat` switched on
+  (`tests/test_serum_host.py`). Opening the preset in Serum's browser is
+  believed not to do this; that is not verified in a host. They can't be
   turned off from the state, and stamping 11.0 instead would skip Serum's
   migration.
 - `build_processor_state` and `convert_*` leave out the file's `mpeEnabled`,
-  `mpeConfig` and `mpePitchBendRange`, because Serum's own editor load doesn't
-  take them from the file either: it keeps the instance's values. Serum 2.1.5
+  `mpeConfig` and `mpePitchBendRange`, so the state matches a fresh Serum
+  instance. (Serum's own editor load is believed to keep the instance's values
+  too; that is not verified in a host.) Serum 2.1.5
   reads a state without them as MPE off, config 0 and range 48, even on an
   instance that had other values, so a host that wants MPE must set it after
   the load. To keep the file's values, pass `keep_mpe=True` to any of these

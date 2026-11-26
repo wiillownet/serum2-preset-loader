@@ -234,8 +234,9 @@ def test_roundtrip():
     assert state["FXRack0"]["proxyParams"] == again["FXRack0"]["proxyParams"] == PROXIES
 
 
-# proxyParams validity (serum-spec 10 section 16.9). _tree()'s FXRack0 holds
-# two FX: type 1 (Flanger, 9 parameters) and type 2 (Phaser, 12).
+# proxyParams validity, as Serum 2.1.5 behaves in tests/test_serum_host.py.
+# _tree()'s FXRack0 holds two FX: type 1 (Flanger, 9 parameters) and type 2
+# (Phaser, 12).
 FX_COUNTS = [11, 9, 12, 12, 14, 35, 16, 10, 13, 10, 15, 12, 11, 7, 10, 6]
 
 
